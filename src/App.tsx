@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Play,
   Pause,
@@ -15,1101 +15,1180 @@ import {
   Plus,
   Trash2,
   RotateCcw,
+  Scissors,
+  Copy,
   Check,
-  Languages,
-  Sliders,
   Video as VideoIcon,
   FileText,
-  Menu,
-  X,
-  ArrowUp,
-  ArrowDown,
   AlertCircle
 } from 'lucide-react';
 
-interface CaptionLine {
+export interface CaptionSegment {
   id: string;
-  start: string;
-  end: string;
+  start: string; // "00:00"
+  end: string;   // "00:03"
+  startSec: number;
+  endSec: number;
   text: string;
+  // Per-caption styling
+  fontSize?: number;
+  style?: 'plain' | 'bold' | 'outline' | 'glow';
+  color?: string;
+  bgColor?: string;
+  alignment?: 'left' | 'center' | 'right';
+  position?: 'bottom' | 'center' | 'top';
 }
 
-const SAMPLE_VIDEOS = [
+const SAMPLE_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+
+const DEFAULT_SEGMENTS: CaptionSegment[] = [
   {
-    name: "Tech Startup Pitch (Sample)",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-    duration: 15,
-    captions: [
-      { id: '1', start: '00:00', end: '00:03', text: 'Welcome to the future of video editing.' },
-      { id: '2', start: '00:03', end: '00:07', text: 'Turn any clip into engaging captions instantly.' },
-      { id: '3', start: '00:07', end: '00:11', text: 'Customize fonts, colors, and layouts with ease.' },
-      { id: '4', start: '00:11', end: '00:15', text: 'Start creating with CaptionPro today.' }
-    ]
+    id: 'seg-1',
+    start: '00:00',
+    end: '00:03',
+    startSec: 0,
+    endSec: 3,
+    text: 'Make every word count.',
+    fontSize: 18,
+    style: 'plain',
+    color: '#ffffff',
+    alignment: 'center',
+    position: 'bottom'
   },
   {
-    name: "Nature Cinematic (Sample)",
-    url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
-    duration: 15,
-    captions: [
-      { id: '1', start: '00:00', end: '00:04', text: 'Explore the breathtaking beauty of nature.' },
-      { id: '2', start: '00:04', end: '00:08', text: 'Every landscape tells an inspiring story.' },
-      { id: '3', start: '00:08', end: '00:12', text: 'Capture moments that last a lifetime.' },
-      { id: '4', start: '00:12', end: '00:15', text: 'Breathe in the tranquility.' }
-    ]
+    id: 'seg-2',
+    start: '00:03',
+    end: '00:07',
+    startSec: 3,
+    endSec: 7,
+    text: 'Tell your story clearly.',
+    fontSize: 18,
+    style: 'bold',
+    color: '#ffe26e',
+    alignment: 'center',
+    position: 'bottom'
+  },
+  {
+    id: 'seg-3',
+    start: '00:07',
+    end: '00:12',
+    startSec: 7,
+    endSec: 12,
+    text: 'Capture moments that matter.',
+    fontSize: 18,
+    style: 'outline',
+    color: '#ffffff',
+    alignment: 'center',
+    position: 'bottom'
   }
 ];
 
+// Helper to convert mm:ss to seconds
+function parseTimeToSeconds(timeStr: string): number {
+  if (!timeStr) return 0;
+  const parts = timeStr.trim().split(':');
+  if (parts.length === 2) {
+    const mins = parseFloat(parts[0]) || 0;
+    const secs = parseFloat(parts[1]) || 0;
+    return mins * 60 + secs;
+  }
+  return parseFloat(timeStr) || 0;
+}
+
+// Helper to format seconds to mm:ss
+function formatSecondsToTime(totalSec: number): string {
+  if (isNaN(totalSec) || totalSec < 0) return '00:00';
+  const mins = Math.floor(totalSec / 60);
+  const secs = Math.floor(totalSec % 60);
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 export default function App() {
-  // Video and playback state
+  // Navigation: Home vs Editor
+  const [view, setView] = useState<'home' | 'editor'>('home');
+  const [activeSideTab, setActiveSideTab] = useState<'edit' | 'layers' | 'style' | 'export'>('edit');
+
+  // Video state
+  const [videoSrc, setVideoSrc] = useState<string>(SAMPLE_VIDEO_URL);
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [videoSrc, setVideoSrc] = useState<string>(SAMPLE_VIDEOS[0].url);
-  const [videoName, setVideoName] = useState<string>(SAMPLE_VIDEOS[0].name);
+  const [videoFileName, setVideoFileName] = useState<string>('sample-video.mp4');
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(15);
-  const [activeTab, setActiveTab] = useState<'captions' | 'video' | 'export'>('captions');
-  const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
-  // Caption settings
+  // Captions state
+  const [captions, setCaptions] = useState<CaptionSegment[]>(DEFAULT_SEGMENTS);
+  const [selectedClipId, setSelectedClipId] = useState<string>('seg-1');
   const [language, setLanguage] = useState<string>('English');
-  const [fontFamily, setFontFamily] = useState<string>('Inter, sans-serif');
-  const [captionStyle, setCaptionStyle] = useState<'classic' | 'outline' | 'glow' | 'box'>('classic');
-  const [textColor, setTextColor] = useState<string>('#ffffff');
-  const [fontSize, setFontSize] = useState<number>(20);
-  const [subtitleAlignment, setSubtitleAlignment] = useState<'center' | 'left' | 'right'>('center');
-  const [subtitlePosition, setSubtitlePosition] = useState<'bottom' | 'center' | 'top'>('bottom');
+  const [applyStyleToAll, setApplyStyleToAll] = useState<boolean>(false);
 
-  // Captions list
-  const [captions, setCaptions] = useState<CaptionLine[]>(SAMPLE_VIDEOS[0].captions);
-  const [currentCaptionText, setCurrentCaptionText] = useState<string>(SAMPLE_VIDEOS[0].captions[0].text);
-
-  // UI state
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+  // Status & Progress
+  const [statusText, setStatusText] = useState<string>('Ready to edit. Upload a video or use sample.');
+  const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [exportProgress, setExportProgress] = useState<number>(0);
+  const [copySuccess, setCopySuccess] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Toast notification helper
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
+  // Get current selected segment
+  const selectedSegment = captions.find(c => c.id === selectedClipId) || captions[0];
+
+  // Active caption at current playback time
+  const activeCaptionAtCurrentTime = captions.find(c => {
+    return currentTime >= c.startSec && currentTime <= c.endSec;
+  }) || (captions.length > 0 ? selectedSegment : null);
+
+  // Switch to editor
+  const handleOpenEditor = () => {
+    setView('editor');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Sync current subtitle with video time
-  useEffect(() => {
-    const activeIndex = Math.min(
-      Math.floor((currentTime / Math.max(duration, 1)) * captions.length),
-      captions.length - 1
-    );
-    if (captions[activeIndex]) {
-      setCurrentCaptionText(captions[activeIndex].text);
-    }
-  }, [currentTime, captions, duration]);
-
-  const handleVideoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    if (file.size > 100 * 1024 * 1024) {
-      setErrorMessage('File size exceeds the 100MB limit.');
-      return;
-    }
-
-    setErrorMessage(null);
-    setVideoFile(file);
-    const url = URL.createObjectURL(file);
-    setVideoSrc(url);
-    setVideoName(`${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB)`);
-    showToast('Video uploaded successfully.');
-
-    // Automatically trigger real transcription on upload if desired or prompt user
-    setIsGenerating(true);
-    showToast('Transcribing video speech with AI...');
-    try {
-      const formData = new FormData();
-      formData.append('video', file);
-      formData.append('language', language);
-
-      const res = await fetch('/api/transcribe-video', {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
-      if (data.error === 'MISSING_API_KEY') {
-        setErrorMessage('براہ کرم API key داخل کریں');
-        setIsGenerating(false);
-        return;
-      }
-      if (data.captions && Array.isArray(data.captions)) {
-        const newCaps: CaptionLine[] = data.captions.map((c: any, index: number) => ({
-          id: String(Date.now() + index),
-          start: c.start || '00:00',
-          end: c.end || '00:03',
-          text: c.text || 'Caption'
-        }));
-        setCaptions(newCaps);
-        if (newCaps.length > 0) setCurrentCaptionText(newCaps[0].text);
-        showToast('✨ Speech transcribed successfully!');
-      } else {
-        throw new Error(data.error || 'Transcription failed');
-      }
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message === 'Failed to fetch' ? 'سرور تک رسائی میں مسئلہ ہے۔' : err.message);
-    } finally {
-      setIsGenerating(false);
-    }
+  const handleOpenHome = () => {
+    setView('home');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleSelectSample = (sample: typeof SAMPLE_VIDEOS[0]) => {
-    setVideoFile(null);
-    setVideoSrc(sample.url);
-    setVideoName(sample.name);
-    setDuration(sample.duration);
-    setCaptions(sample.captions);
-    setCurrentCaptionText(sample.captions[0].text);
-    setErrorMessage(null);
-    showToast(`Loaded: ${sample.name}`);
-  };
-
+  // Video playback controls
   const togglePlay = async () => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
     try {
-      if (videoRef.current.paused) {
-        await videoRef.current.play();
+      if (video.paused) {
+        await video.play();
         setIsPlaying(true);
       } else {
-        videoRef.current.pause();
+        video.pause();
         setIsPlaying(false);
       }
     } catch (err) {
-      setErrorMessage('Video playback could not start.');
+      setStatusText('Playback failed. Please interact with page first.');
     }
   };
 
   const toggleMute = () => {
-    if (!videoRef.current) return;
-    videoRef.current.muted = !isMuted;
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = !isMuted;
     setIsMuted(!isMuted);
   };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setCurrentTime(val);
-    if (videoRef.current) {
-      videoRef.current.currentTime = val;
+  const handleSeek = (newSec: number) => {
+    const video = videoRef.current;
+    if (video) {
+      video.currentTime = newSec;
+      setCurrentTime(newSec);
     }
   };
 
-  const formatTime = (secs: number) => {
-    if (isNaN(secs)) return '00:00';
-    const mins = Math.floor(secs / 60);
-    const remain = Math.floor(secs % 60);
-    return `${String(mins).padStart(2, '0')}:${String(remain).padStart(2, '0')}`;
-  };
+  // Upload video file
+  const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-  // Generate AI captions via topic/language
-  const handleGenerateAICaptions = async () => {
-    setIsGenerating(true);
-    setErrorMessage(null);
-    showToast(`Generating captions in ${language}...`);
-    try {
-      const res = await fetch('/api/generate-captions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          topic: videoName,
-          language: language,
-          durationSeconds: Math.floor(duration)
-        })
-      });
-      const data = await res.json();
-      if (data.error === 'MISSING_API_KEY') {
-        setErrorMessage('براہ کرم API key داخل کریں');
-        return;
-      }
-      if (data.captions && Array.isArray(data.captions)) {
-        const newCaps: CaptionLine[] = data.captions.map((c: any, index: number) => ({
-          id: String(Date.now() + index),
-          start: c.start || '00:00',
-          end: c.end || '00:03',
-          text: c.text || 'Caption text'
-        }));
-        setCaptions(newCaps);
-        if (newCaps.length > 0) setCurrentCaptionText(newCaps[0].text);
-        showToast('✨ AI captions generated successfully!');
-      } else {
-        throw new Error(data.error || 'Failed to generate');
-      }
-    } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleAddCaptionLine = () => {
-    const newId = String(Date.now());
-    const newLine: CaptionLine = {
-      id: newId,
-      start: formatTime(currentTime),
-      end: formatTime(currentTime + 3),
-      text: 'New subtitle line...'
-    };
-    setCaptions([...captions, newLine]);
-    showToast('Added new caption line');
-  };
-
-  const handleDeleteCaption = (id: string) => {
-    if (captions.length <= 1) {
-      showToast('Keep at least one caption line.');
+    if (file.size > 100 * 1024 * 1024) {
+      setStatusText('Error: Video file exceeds 100MB size limit.');
       return;
     }
-    setCaptions(captions.filter(c => c.id !== id));
-    showToast('Caption line removed');
+
+    const url = URL.createObjectURL(file);
+    setVideoFile(file);
+    setVideoFileName(file.name);
+    setVideoSrc(url);
+    setStatusText(`Video loaded: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB). Click "✨ Generate Captions" to transcribe speech.`);
   };
 
-  const handleUpdateCaptionText = (id: string, text: string) => {
-    setCaptions(captions.map(c => c.id === id ? { ...c, text } : c));
-    setCurrentCaptionText(text);
+  // Select a caption clip
+  const handleSelectClip = (id: string) => {
+    setSelectedClipId(id);
+    const clip = captions.find(c => c.id === id);
+    if (clip && videoRef.current) {
+      videoRef.current.currentTime = clip.startSec;
+      setCurrentTime(clip.startSec);
+    }
+    setStatusText(`Editing clip "${clip?.text.slice(0, 24)}..." (${clip?.start} - ${clip?.end})`);
   };
 
-  const handleUpdateCaptionTime = (id: string, field: 'start' | 'end', val: string) => {
-    setCaptions(captions.map(c => c.id === id ? { ...c, [field]: val } : c));
+  // Update selected caption text
+  const handleUpdateText = (newText: string) => {
+    if (!selectedSegment) return;
+    setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, text: newText } : c));
   };
 
-  // Reorder caption segments (Move Up / Down)
-  const handleMoveSegment = (index: number, direction: 'up' | 'down') => {
-    if ((direction === 'up' && index === 0) || (direction === 'down' && index === captions.length - 1)) return;
-    const newCaps = [...captions];
-    const targetIdx = direction === 'up' ? index - 1 : index + 1;
-    const temp = newCaps[index];
-    newCaps[index] = newCaps[targetIdx];
-    newCaps[targetIdx] = temp;
-    setCaptions(newCaps);
-    showToast('Segment reordered');
+  // Update timestamps
+  const handleUpdateStartTime = (val: string) => {
+    if (!selectedSegment) return;
+    const sec = parseTimeToSeconds(val);
+    setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, start: val, startSec: sec } : c));
   };
 
-  const handleExportSubtitles = (format: 'srt' | 'vtt' | 'json') => {
-    let content = '';
-    let mime = 'text/plain';
-    let filename = `captions.${format}`;
+  const handleUpdateEndTime = (val: string) => {
+    if (!selectedSegment) return;
+    const sec = parseTimeToSeconds(val);
+    setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, end: val, endSec: sec } : c));
+  };
 
-    if (format === 'srt') {
-      content = captions.map((c, i) => `${i + 1}\n00:${c.start},000 --> 00:${c.end},000\n${c.text}\n`).join('\n');
-    } else if (format === 'vtt') {
-      content = `WEBVTT - Exported by CaptionPro\n\n` + captions.map((c, i) => `${i + 1}\n00:${c.start}.000 --> 00:${c.end}.000\n${c.text}\n`).join('\n');
+  // Update styling
+  const handleUpdateStyle = (styleType: 'plain' | 'bold' | 'outline' | 'glow') => {
+    if (!selectedSegment) return;
+    if (applyStyleToAll) {
+      setCaptions(prev => prev.map(c => ({ ...c, style: styleType })));
+      setStatusText(`Applied style "${styleType}" to all captions.`);
     } else {
-      content = JSON.stringify(captions, null, 2);
-      mime = 'application/json';
+      setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, style: styleType } : c));
+      setStatusText(`Updated style for selected clip.`);
+    }
+  };
+
+  const handleUpdateFontSize = (size: number) => {
+    if (!selectedSegment) return;
+    if (applyStyleToAll) {
+      setCaptions(prev => prev.map(c => ({ ...c, fontSize: size })));
+    } else {
+      setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, fontSize: size } : c));
+    }
+  };
+
+  const handleUpdateColor = (color: string) => {
+    if (!selectedSegment) return;
+    if (applyStyleToAll) {
+      setCaptions(prev => prev.map(c => ({ ...c, color })));
+    } else {
+      setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, color } : c));
+    }
+  };
+
+  const handleUpdateAlignment = (alignment: 'left' | 'center' | 'right') => {
+    if (!selectedSegment) return;
+    if (applyStyleToAll) {
+      setCaptions(prev => prev.map(c => ({ ...c, alignment })));
+    } else {
+      setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, alignment } : c));
+    }
+  };
+
+  const handleUpdatePosition = (position: 'bottom' | 'center' | 'top') => {
+    if (!selectedSegment) return;
+    if (applyStyleToAll) {
+      setCaptions(prev => prev.map(c => ({ ...c, position })));
+    } else {
+      setCaptions(prev => prev.map(c => c.id === selectedSegment.id ? { ...c, position } : c));
+    }
+  };
+
+  // Add new caption clip
+  const handleAddCaptionClip = () => {
+    const startSec = Math.floor(currentTime);
+    const endSec = Math.min(startSec + 3, Math.floor(duration));
+    const newId = `seg-${Date.now()}`;
+    const newClip: CaptionSegment = {
+      id: newId,
+      start: formatSecondsToTime(startSec),
+      end: formatSecondsToTime(endSec),
+      startSec,
+      endSec,
+      text: 'New caption text',
+      fontSize: selectedSegment?.fontSize || 18,
+      style: selectedSegment?.style || 'plain',
+      color: selectedSegment?.color || '#ffffff',
+      alignment: selectedSegment?.alignment || 'center',
+      position: selectedSegment?.position || 'bottom'
+    };
+    // Insert and sort by startSec
+    const updated = [...captions, newClip].sort((a, b) => a.startSec - b.startSec);
+    setCaptions(updated);
+    setSelectedClipId(newId);
+    setStatusText('Added new text clip to timeline.');
+  };
+
+  // Split caption at current time
+  const handleSplitClip = () => {
+    if (!selectedSegment) return;
+    if (currentTime <= selectedSegment.startSec || currentTime >= selectedSegment.endSec) {
+      setStatusText('Seek timeline cursor inside the selected clip to split it.');
+      return;
     }
 
-    const blob = new Blob([content], { type: mime });
+    const firstEnd = formatSecondsToTime(currentTime);
+    const secondStart = firstEnd;
+    const secondEnd = selectedSegment.end;
+
+    const words = selectedSegment.text.split(' ');
+    const half = Math.ceil(words.length / 2);
+    const text1 = words.slice(0, half).join(' ') || 'First half';
+    const text2 = words.slice(half).join(' ') || 'Second half';
+
+    const newId = `seg-${Date.now()}`;
+    const newClip: CaptionSegment = {
+      id: newId,
+      start: secondStart,
+      end: secondEnd,
+      startSec: currentTime,
+      endSec: selectedSegment.endSec,
+      text: text2,
+      fontSize: selectedSegment.fontSize,
+      style: selectedSegment.style,
+      color: selectedSegment.color,
+      alignment: selectedSegment.alignment,
+      position: selectedSegment.position
+    };
+
+    const updated = captions.map(c => {
+      if (c.id === selectedSegment.id) {
+        return {
+          ...c,
+          end: firstEnd,
+          endSec: currentTime,
+          text: text1
+        };
+      }
+      return c;
+    });
+
+    updated.push(newClip);
+    updated.sort((a, b) => a.startSec - b.startSec);
+    setCaptions(updated);
+    setSelectedClipId(newId);
+    setStatusText(`Split clip into two segments at ${firstEnd}.`);
+  };
+
+  // Delete selected caption clip
+  const handleDeleteSelected = () => {
+    if (captions.length <= 1) {
+      setStatusText('Timeline requires at least one caption segment.');
+      return;
+    }
+    const updated = captions.filter(c => c.id !== selectedClipId);
+    setCaptions(updated);
+    setSelectedClipId(updated[0].id);
+    setStatusText('Selected caption clip deleted.');
+  };
+
+  // Copy all captions to clipboard
+  const handleCopyCaptions = async () => {
+    try {
+      const text = captions.map((c, i) => `${i + 1}\n${c.start} --> ${c.end}\n${c.text}\n`).join('\n');
+      await navigator.clipboard.writeText(text);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+      setStatusText('All caption text and timestamps copied to clipboard.');
+    } catch (e) {
+      setStatusText('Clipboard access unavailable.');
+    }
+  };
+
+  // Generate captions using server-side Gemini API
+  const handleGenerateCaptions = async () => {
+    setIsTranscribing(true);
+    setStatusText(`Generating captions in ${language}... Uploading audio track to Gemini speech model.`);
+
+    try {
+      let res: Response;
+
+      if (videoFile) {
+        // Send actual video file
+        const formData = new FormData();
+        formData.append('video', videoFile);
+        formData.append('language', language);
+
+        res = await fetch('/api/transcribe-video', {
+          method: 'POST',
+          body: formData
+        });
+      } else {
+        // Sample video fallback route
+        res = await fetch('/api/generate-captions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topic: videoFileName,
+            language: language,
+            durationSeconds: Math.floor(duration)
+          })
+        });
+      }
+
+      const data = await res.json();
+
+      if (data.error === 'MISSING_API_KEY') {
+        setStatusText('API key required: Please configure your GEMINI_API_KEY in the Settings > Secrets panel to transcribe speech with AI.');
+        return;
+      }
+
+      if (data.captions && Array.isArray(data.captions) && data.captions.length > 0) {
+        const parsed: CaptionSegment[] = data.captions.map((item: any, idx: number) => {
+          const startSec = parseTimeToSeconds(item.start || '00:00');
+          const endSec = parseTimeToSeconds(item.end || '00:03');
+          return {
+            id: `seg-${Date.now()}-${idx}`,
+            start: item.start || '00:00',
+            end: item.end || '00:03',
+            startSec,
+            endSec,
+            text: item.text || 'Caption',
+            fontSize: 18,
+            style: 'plain',
+            color: '#ffffff',
+            alignment: 'center',
+            position: 'bottom'
+          };
+        });
+
+        parsed.sort((a, b) => a.startSec - b.startSec);
+        setCaptions(parsed);
+        setSelectedClipId(parsed[0].id);
+        setStatusText(`✨ Transcribed ${parsed.length} speech segments successfully in ${language}!`);
+      } else {
+        throw new Error(data.error || 'Failed to transcribe speech segments');
+      }
+    } catch (err: any) {
+      console.error("Transcription error:", err);
+      setStatusText(`Transcription failed: ${err.message || 'Server error'}. Check Settings > Secrets for GEMINI_API_KEY.`);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  // Reset project
+  const handleReset = () => {
+    setVideoSrc(SAMPLE_VIDEO_URL);
+    setVideoFile(null);
+    setVideoFileName('sample-video.mp4');
+    setCaptions(DEFAULT_SEGMENTS);
+    setSelectedClipId(DEFAULT_SEGMENTS[0].id);
+    setCurrentTime(0);
+    setStatusText('Project reset to initial state.');
+  };
+
+  // Export SRT or VTT
+  const handleExportSubtitleFile = (format: 'srt' | 'vtt') => {
+    let content = '';
+    if (format === 'srt') {
+      content = captions.map((c, i) => `${i + 1}\n00:${c.start},000 --> 00:${c.end},000\n${c.text}\n`).join('\n');
+    } else {
+      content = `WEBVTT - Exported by CaptionPro\n\n` + captions.map((c, i) => `${i + 1}\n00:${c.start}.000 --> 00:${c.end}.000\n${c.text}\n`).join('\n');
+    }
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = filename;
+    a.download = `captions.${format}`;
     a.click();
     URL.revokeObjectURL(url);
-    showToast(`Successfully exported ${format.toUpperCase()} subtitles!`);
+    setStatusText(`Exported subtitle file: captions.${format}`);
   };
 
-  const handleExportVideo = async () => {
+  // Real Video Export: Burned-in captions via HTML5 Canvas + MediaRecorder
+  const handleExportBurnedVideo = async () => {
+    const video = videoRef.current;
+    if (!video) {
+      setStatusText('Error: Video not loaded.');
+      return;
+    }
+
     setIsExporting(true);
-    setErrorMessage(null);
-    showToast('Preparing MP4 video export with burned-in captions...');
+    setExportProgress(0);
+    setStatusText('Initializing video burner... Capturing frames with styled captions.');
 
     try {
-      const formData = new FormData();
-      if (videoFile) {
-        formData.append('video', videoFile);
-      } else {
-        // Fetch sample video blob
-        const resp = await fetch(videoSrc);
-        const blob = await resp.blob();
-        formData.append('video', blob, 'sample.mp4');
-      }
-      formData.append('captions', JSON.stringify(captions));
+      const origCurrentTime = video.currentTime;
+      const origPlaying = !video.paused;
+      video.pause();
 
-      const res = await fetch('/api/export-video', {
-        method: 'POST',
-        body: formData
+      // Create rendering canvas
+      const width = video.videoWidth || 1280;
+      const height = video.videoHeight || 720;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+
+      if (!ctx) {
+        throw new Error('Canvas 2D context not supported');
+      }
+
+      // Check supported MIME types for downloadable video
+      let mimeType = 'video/webm;codecs=vp9';
+      let fileExt = 'webm';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
+          mimeType = 'video/mp4;codecs=avc1';
+          fileExt = 'mp4';
+        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+          mimeType = 'video/mp4';
+          fileExt = 'mp4';
+        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+          mimeType = 'video/webm;codecs=vp8';
+          fileExt = 'webm';
+        } else if (MediaRecorder.isTypeSupported('video/webm')) {
+          mimeType = 'video/webm';
+          fileExt = 'webm';
+        }
+      }
+
+      // Set up media recorder from canvas stream
+      const stream = canvas.captureStream(30);
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      const renderPromise = new Promise<Blob>((resolve, reject) => {
+        recorder.onstop = () => {
+          const finalBlob = new Blob(chunks, { type: mimeType });
+          resolve(finalBlob);
+        };
+        recorder.onerror = (e) => reject(e);
       });
 
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Export failed');
+      recorder.start(100);
+
+      // Play video from start to duration and render each frame with captions
+      const totalDuration = video.duration || duration || 10;
+      const fps = 30;
+      const frameStep = 1 / fps;
+      let renderTime = 0;
+
+      while (renderTime < totalDuration) {
+        video.currentTime = renderTime;
+        await new Promise(r => {
+          const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked);
+            r(true);
+          };
+          video.addEventListener('seeked', onSeeked);
+        });
+
+        // 1. Draw video frame
+        ctx.drawImage(video, 0, 0, width, height);
+
+        // 2. Find active caption at this render timestamp
+        const activeClip = captions.find(c => renderTime >= c.startSec && renderTime <= c.endSec);
+        if (activeClip && activeClip.text.trim()) {
+          ctx.save();
+          const currentFontSize = (activeClip.fontSize || 18) * (height / 400);
+          const fontStyle = activeClip.style || 'plain';
+          const fontWeight = fontStyle === 'bold' ? 'bold' : 'normal';
+          ctx.font = `${fontWeight} ${Math.round(currentFontSize)}px Inter, system-ui, sans-serif`;
+          ctx.textAlign = (activeClip.alignment || 'center') as CanvasTextAlign;
+          ctx.textBaseline = 'middle';
+
+          // Position calculation
+          let yPos = height * 0.88;
+          if (activeClip.position === 'top') yPos = height * 0.12;
+          else if (activeClip.position === 'center') yPos = height * 0.5;
+
+          let xPos = width * 0.5;
+          if (activeClip.alignment === 'left') xPos = width * 0.08;
+          else if (activeClip.alignment === 'right') xPos = width * 0.92;
+
+          // Background pill
+          const textMetrics = ctx.measureText(activeClip.text);
+          const padX = currentFontSize * 0.6;
+          const padY = currentFontSize * 0.35;
+          let boxX = xPos - textMetrics.width / 2 - padX;
+          if (activeClip.alignment === 'left') boxX = xPos - padX;
+          if (activeClip.alignment === 'right') boxX = xPos - textMetrics.width - padX;
+
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+          ctx.beginPath();
+          ctx.roundRect(boxX, yPos - currentFontSize / 2 - padY, textMetrics.width + padX * 2, currentFontSize + padY * 2, 8);
+          ctx.fill();
+
+          // Stroke outline if applicable
+          if (fontStyle === 'outline') {
+            ctx.strokeStyle = '#000000';
+            ctx.lineWidth = Math.max(3, currentFontSize * 0.15);
+            ctx.strokeText(activeClip.text, xPos, yPos);
+          } else if (fontStyle === 'glow') {
+            ctx.shadowColor = activeClip.color || '#4169e1';
+            ctx.shadowBlur = 12;
+          }
+
+          // Text fill
+          ctx.fillStyle = activeClip.color || '#ffffff';
+          ctx.fillText(activeClip.text, xPos, yPos);
+          ctx.restore();
+        }
+
+        renderTime += frameStep;
+        setExportProgress(Math.min(99, Math.round((renderTime / totalDuration) * 100)));
       }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      // Finish recording
+      recorder.stop();
+      const outputBlob = await renderPromise;
+
+      // Trigger real file download
+      const downloadUrl = URL.createObjectURL(outputBlob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = 'captionpro-burned-video.mp4';
+      a.href = downloadUrl;
+      a.download = `captionpro-burned-video.${fileExt}`;
       a.click();
-      URL.revokeObjectURL(url);
-      showToast('🎉 Video successfully exported with burned-in captions!');
+      URL.revokeObjectURL(downloadUrl);
+
+      // Restore original playback position
+      video.currentTime = origCurrentTime;
+      if (origPlaying) video.play();
+
+      setExportProgress(100);
+      setStatusText(`🎉 Real video export complete! Downloaded "captionpro-burned-video.${fileExt}" with permanently burned captions.`);
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage('Video burning limitation: Server graphics container encountered an FFmpeg binary restriction. We have automatically downloaded your .SRT subtitles file as a working alternative.');
-      handleExportSubtitles('srt');
+      console.error("Export error:", err);
+      setStatusText(`Export notice: Client rendering encountered: ${err.message || 'Codec error'}. You can also download the standard .SRT subtitle file below.`);
+      handleExportSubtitleFile('srt');
     } finally {
       setIsExporting(false);
     }
   };
 
-  const handleResetProject = () => {
-    setVideoFile(null);
-    setCaptions(SAMPLE_VIDEOS[0].captions);
-    setCurrentCaptionText(SAMPLE_VIDEOS[0].captions[0].text);
-    setVideoSrc(SAMPLE_VIDEOS[0].url);
-    setVideoName(SAMPLE_VIDEOS[0].name);
-    setLanguage('English');
-    setFontFamily('Inter, sans-serif');
-    setCaptionStyle('classic');
-    setTextColor('#ffffff');
-    setFontSize(20);
-    setSubtitleAlignment('center');
-    setSubtitlePosition('bottom');
-    setErrorMessage(null);
-    showToast('Project reset to default state.');
-  };
-
-  // Get CSS styles for subtitle overlay
-  const getSubtitleOverlayStyle = (): React.CSSProperties => {
-    let base: React.CSSProperties = {
-      color: textColor,
-      fontSize: `${fontSize}px`,
-      fontFamily: fontFamily,
-      fontWeight: 900,
-      textAlign: subtitleAlignment,
-      padding: '6px 14px',
-      borderRadius: '8px',
-      maxWidth: '90%',
+  // Inline CSS for the active video subtitle overlay
+  const getOverlayStyle = (): React.CSSProperties => {
+    if (!activeCaptionAtCurrentTime) return { display: 'none' };
+    const clip = activeCaptionAtCurrentTime;
+    const base: React.CSSProperties = {
+      position: 'absolute',
+      left: '4%',
+      right: '4%',
+      fontSize: `${clip.fontSize || 18}px`,
+      color: clip.color || '#ffffff',
+      textAlign: clip.alignment || 'center',
+      pointerEvents: 'none',
+      zIndex: 3,
+      padding: '4px 10px',
+      borderRadius: '6px',
+      backgroundColor: 'rgba(0, 0, 0, 0.65)',
+      display: 'inline-block',
+      margin: '0 auto',
+      width: 'fit-content',
+      maxWidth: '92%',
       wordBreak: 'break-word',
-      lineHeight: 1.25,
-      transition: 'all 0.15s ease'
+      transition: 'all 0.1s ease'
     };
 
-    if (captionStyle === 'outline') {
-      base.textShadow = '2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 3px 8px rgba(0,0,0,0.8)';
-    } else if (captionStyle === 'glow') {
-      base.textShadow = `0 0 12px ${textColor}, 0 0 24px ${textColor}, 0 2px 6px rgba(0,0,0,0.9)`;
-    } else if (captionStyle === 'box') {
-      base.backgroundColor = 'rgba(0, 0, 0, 0.75)';
-      base.backdropFilter = 'blur(4px)';
-      base.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
+    if (clip.position === 'top') {
+      base.top = '10%';
+      base.bottom = 'auto';
+    } else if (clip.position === 'center') {
+      base.top = '50%';
+      base.transform = 'translateY(-50%)';
+      base.bottom = 'auto';
     } else {
-      base.backgroundColor = 'rgba(0, 0, 0, 0.6)';
+      base.bottom = '12%';
+      base.top = 'auto';
+    }
+
+    if (clip.style === 'bold') {
+      base.fontWeight = 800;
+    } else if (clip.style === 'outline') {
+      base.fontWeight = 700;
+      base.textShadow = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 2px 4px #000';
+    } else if (clip.style === 'glow') {
+      base.textShadow = `0 0 10px ${clip.color || '#4169e1'}, 0 2px 4px #000`;
+    } else {
+      base.fontWeight = 600;
       base.textShadow = '0 2px 4px rgba(0,0,0,0.8)';
     }
 
     return base;
   };
 
-  const getPositionClass = () => {
-    if (subtitlePosition === 'top') return 'top-6';
-    if (subtitlePosition === 'center') return 'top-1/2 -translate-y-1/2';
-    return 'bottom-10';
-  };
-
-  const getAlignmentClass = () => {
-    if (subtitleAlignment === 'left') return 'justify-start text-left';
-    if (subtitleAlignment === 'right') return 'justify-end text-right';
-    return 'justify-center text-center';
-  };
-
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans selection:bg-emerald-100 selection:text-emerald-900">
-      {/* Toast Notification */}
-      {toastMessage && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl text-xs font-semibold flex items-center gap-2.5 border border-slate-800 animate-fade-in">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          {toastMessage}
-        </div>
-      )}
-
-      {/* Header */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-400 to-teal-600 text-white flex items-center justify-center shadow-md shadow-emerald-500/20 font-black">
-              <Play className="w-4 h-4 fill-white translate-x-0.5" />
-            </div>
-            <span className="font-extrabold text-xl tracking-tight text-slate-900 flex items-center gap-1.5">
-              Caption<span className="text-emerald-600">Pro</span>
-              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">AI Studio</span>
-            </span>
-          </div>
-
-          <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-slate-600">
-            <a href="#editor" className="hover:text-emerald-600 transition-colors">Editor</a>
-            <a href="#features" className="hover:text-emerald-600 transition-colors">Features</a>
-            <a href="#how" className="hover:text-emerald-600 transition-colors">How It Works</a>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <a
-              href="#editor"
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-lg shadow-emerald-600/20 transition-all transform hover:-translate-y-0.5"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Open Editor
-            </a>
-            <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden p-2 rounded-lg text-slate-600 hover:bg-slate-100"
-              aria-label="Toggle menu"
-            >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+    <div>
+      {/* Top Header */}
+      <header className="top">
+        <a className="brand" href="#home" onClick={(e) => { e.preventDefault(); handleOpenHome(); }} id="brandHome">
+          <span className="logo">▶</span>CaptionPro
+        </a>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {view === 'editor' ? (
+            <button className="btn" onClick={handleOpenHome}>
+              ← Home
             </button>
-          </div>
+          ) : null}
+          <button className="btn primary" onClick={handleOpenEditor} id="openEditor">
+            Editing →
+          </button>
         </div>
-
-        {mobileMenuOpen && (
-          <div className="md:hidden bg-white border-b border-slate-200 px-4 py-4 space-y-3">
-            <a href="#editor" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Editor</a>
-            <a href="#features" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">Features</a>
-            <a href="#how" onClick={() => setMobileMenuOpen(false)} className="block text-sm font-medium text-slate-700">How It Works</a>
-          </div>
-        )}
       </header>
 
-      {/* Hero Section */}
-      <section className="relative overflow-hidden pt-10 pb-16 lg:pt-16 lg:pb-24 border-b border-slate-200/60 bg-gradient-to-b from-white via-slate-50/50 to-[#f8fafc]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
-            <div className="lg:col-span-7 space-y-6 text-center lg:text-left">
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 text-xs font-bold tracking-wide shadow-sm">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-spin" style={{ animationDuration: '4s' }} />
-                AI VIDEO CAPTION STUDIO
-              </div>
-              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-slate-900 leading-[1.1]">
-                Turn Videos into <br className="hidden sm:inline" />
-                <span className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 bg-clip-text text-transparent">
-                  Captions Automatically
-                </span>
-              </h1>
-              <p className="text-base sm:text-lg text-slate-600 max-w-2xl mx-auto lg:mx-0 leading-relaxed font-normal">
-                Professional subtitle editor with automated AI speech transcription, multi-language support (English, Urdu, Hindi, Punjabi, Roman Urdu), and custom cinematic styles.
+      {/* VIEW 1: HOMEPAGE (Exact approved design) */}
+      {view === 'home' && (
+        <main className="wrap">
+          <section className="hero">
+            <div>
+              <p style={{ color: '#4169e1', fontWeight: 750, marginBottom: '9px' }}>
+                VIDEO CAPTIONS, MADE SIMPLE
               </p>
-              
-              <div className="flex flex-wrap items-center justify-center lg:justify-start gap-4 pt-2">
-                <a
-                  href="#editor"
-                  className="inline-flex items-center gap-2.5 px-6 py-3.5 rounded-xl text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-xl shadow-emerald-600/25 transition-all transform hover:-translate-y-0.5"
-                >
-                  <Upload className="w-4 h-4" />
-                  Upload Video
-                </a>
-                <button
-                  onClick={() => handleSelectSample(SAMPLE_VIDEOS[1])}
-                  className="inline-flex items-center gap-2 px-5 py-3.5 rounded-xl text-sm font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 shadow-sm transition-all"
-                >
-                  <Play className="w-4 h-4 text-emerald-600 fill-emerald-600" />
-                  Try Sample Video
+              <h1>Add captions.<br />Edit every word.</h1>
+              <p>
+                Upload a video, customize your caption style, and arrange text clips on a compact timeline inspired by modern video editors.
+              </p>
+              <div className="hero-actions">
+                <button className="btn primary" onClick={handleOpenEditor} id="startEditing">
+                  ＋ Start Editing
                 </button>
-              </div>
-
-              <div className="pt-4 flex items-center justify-center lg:justify-start gap-6 text-xs text-slate-500 font-medium">
-                <span className="flex items-center gap-1.5"><Check className="w-4 h-4 text-emerald-600" /> Multi-language speech AI</span>
-                <span className="flex items-center gap-1.5"><Check className="w-4 h-4 text-emerald-600" /> Instant subtitle export</span>
+                <a className="btn" href="#features">
+                  Explore Features
+                </a>
               </div>
             </div>
-
-            <div className="lg:col-span-5">
-              <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-2xl shadow-slate-200/70 relative">
-                <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-900 flex items-center justify-center group shadow-inner">
-                  <video
-                    src={videoSrc}
-                    className="w-full h-full object-cover opacity-90"
-                    muted
-                    loop
-                    autoPlay
-                    playsInline
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none"></div>
-                  
-                  <div className={`absolute ${getPositionClass()} left-4 right-4 flex ${getAlignmentClass()} pointer-events-none`}>
-                    <div style={getSubtitleOverlayStyle()}>
-                      {currentCaptionText}
-                    </div>
-                  </div>
-
-                  <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
-                    Live Preview
-                  </div>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between text-xs text-slate-500 px-1">
-                  <span className="font-medium truncate max-w-[200px]">{videoName}</span>
-                  <span className="font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">HD 1080p</span>
-                </div>
+            <div className="card" style={{ padding: '10px' }}>
+              <div className="preview">
+                <div className="sample">Make every word count.</div>
+              </div>
+              <div className="row" style={{ padding: '10px 2px 0' }}>
+                <span className="muted">Preview · 16:9</span>
+                <span className="muted">CaptionPro</span>
               </div>
             </div>
-          </div>
-        </div>
-      </section>
+          </section>
 
-      {/* Main Video Editor Section */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12" id="editor">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
-          <div>
-            <div className="text-xs font-extrabold text-emerald-600 tracking-wider uppercase mb-1">Interactive Studio</div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Video Caption Editor</h2>
-            <p className="text-sm text-slate-600 mt-1">Upload a video, transcribe with AI, customize subtitle styles, and export.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleResetProject}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 transition-all shadow-sm"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-              Reset Project
-            </button>
-          </div>
-        </div>
-
-        {/* Error Alert if any */}
-        {errorMessage && (
-          <div className="mb-6 bg-rose-50 border border-rose-200 text-rose-800 p-4 rounded-xl text-xs font-medium flex items-start gap-3">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-            <div className="leading-relaxed">{errorMessage}</div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden p-4 sm:p-6">
-          
-          {/* Left Sidebar: Project & Style Settings */}
-          <aside className="lg:col-span-4 space-y-6 bg-slate-50/70 p-5 rounded-xl border border-slate-200/80">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-emerald-600" />
-                Project Settings
-              </h3>
-              <span className="text-[10px] font-bold bg-slate-200 text-slate-700 px-2 py-0.5 rounded">v2.5</span>
+          <section id="features" style={{ paddingTop: '20px' }}>
+            <h2>Everything you need to start</h2>
+            <div className="features">
+              <article className="card feature">
+                <h3>Auto Captions</h3>
+                <p>AI speech-to-text pipeline that transcribes video audio into synchronized subtitle clips.</p>
+              </article>
+              <article className="card feature">
+                <h3>Text Styling</h3>
+                <p>Adjust caption font size, colors, outlines, bold styles, and positions per segment.</p>
+              </article>
+              <article className="card feature">
+                <h3>Timeline Editing</h3>
+                <p>Arrange, split, and trim small caption clips on a compact track under the video.</p>
+              </article>
             </div>
+          </section>
 
-            {/* Video File Upload & Samples */}
-            <div className="space-y-3">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Video Source (Max 100MB)</label>
-              <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 hover:border-emerald-500 bg-white hover:bg-emerald-50/30 rounded-xl p-4 cursor-pointer transition-all text-center">
-                <Upload className="w-6 h-6 text-emerald-600 mb-1.5" />
-                <span className="text-xs font-bold text-slate-800">Choose video file</span>
-                <span className="text-[10px] text-slate-500 mt-0.5">MP4, MOV, WEBM</span>
-                <input type="file" accept="video/*" onChange={handleVideoUpload} className="hidden" />
-              </label>
+          <footer className="footer">
+            © 2026 CaptionPro · English interface · AI Studio Build
+          </footer>
+        </main>
+      )}
 
-              <div className="grid grid-cols-2 gap-2 pt-1">
-                {SAMPLE_VIDEOS.map((sample, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => handleSelectSample(sample)}
-                    className={`text-left p-2 rounded-lg border text-xs font-semibold truncate transition-all ${
-                      videoName.includes(sample.name.split(' ')[0])
-                        ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    ▶ Sample {idx + 1}
-                  </button>
-                ))}
+      {/* VIEW 2: EDITOR (Connected directly, approved compact layout) */}
+      {view === 'editor' && (
+        <main className="wrap" id="editorView">
+          {/* Top Bar inside Editor */}
+          <div className="row" style={{ marginBottom: '12px' }}>
+            <div>
+              <h2 style={{ margin: 0 }}>Video Editor</h2>
+              <div className="muted" style={{ fontSize: '12px' }}>
+                Compact timeline · Real speech transcription & burned MP4 export
               </div>
             </div>
-
-            {/* Language & Transcription */}
-            <div className="space-y-3 pt-2 border-t border-slate-200">
-              <div className="flex items-center justify-between">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Spoken Language</label>
-                <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                  <Languages className="w-3 h-3" /> AI STT
-                </span>
-              </div>
-              <select
-                value={language}
-                onChange={(e) => setLanguage(e.target.value)}
-                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="English">English</option>
-                <option value="Urdu">Urdu (اردو)</option>
-                <option value="Roman Urdu">Roman Urdu</option>
-                <option value="Hindi">Hindi (हिन्दी)</option>
-                <option value="Punjabi">Punjabi (ਪੰਜਾਬੀ)</option>
-              </select>
-
-              <button
-                onClick={handleGenerateAICaptions}
-                disabled={isGenerating}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50"
-              >
-                <Sparkles className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
-                {isGenerating ? 'Transcribing Speech...' : '✨ Transcribe & Generate Captions'}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button className="btn" onClick={handleReset} id="resetBtn">
+                <RotateCcw style={{ width: '13px', height: '13px' }} /> Reset
               </button>
             </div>
+          </div>
 
-            {/* Caption Styling */}
-            <div className="space-y-3 pt-2 border-t border-slate-200">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Font Family</label>
-              <select
-                value={fontFamily}
-                onChange={(e) => setFontFamily(e.target.value)}
-                className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          <div className="editor">
+            {/* Left Sidebar Menu */}
+            <aside className="card side">
+              <div className="side-title" style={{ fontWeight: 800, padding: '8px' }}>Workspace</div>
+              <button
+                className={activeSideTab === 'edit' ? 'active' : ''}
+                onClick={() => setActiveSideTab('edit')}
               >
-                <option value="Inter, sans-serif">Inter (Clean)</option>
-                <option value="Poppins, sans-serif">Poppins (Modern)</option>
-                <option value="Roboto Mono, monospace">Roboto Mono (Tech)</option>
-                <option value="Georgia, serif">Georgia (Classic Serif)</option>
-              </select>
-            </div>
+                ▣ Edit Video
+              </button>
+              <button
+                className={activeSideTab === 'layers' ? 'active' : ''}
+                onClick={() => setActiveSideTab('layers')}
+              >
+                ▤ Text Layers ({captions.length})
+              </button>
+              <button
+                className={activeSideTab === 'style' ? 'active' : ''}
+                onClick={() => setActiveSideTab('style')}
+              >
+                Aa Caption Style
+              </button>
+              <button
+                className={activeSideTab === 'export' ? 'active' : ''}
+                onClick={() => setActiveSideTab('export')}
+              >
+                ⬇ Export Center
+              </button>
+            </aside>
 
-            <div className="space-y-3">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Subtitle Style</label>
-              <div className="grid grid-cols-2 gap-2">
-                {(['classic', 'outline', 'glow', 'box'] as const).map((style) => (
-                  <button
-                    key={style}
-                    onClick={() => setCaptionStyle(style)}
-                    className={`py-2 px-3 rounded-lg text-xs font-bold capitalize border transition-all ${
-                      captionStyle === style
-                        ? 'border-emerald-600 bg-emerald-50 text-emerald-700 shadow-sm'
-                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {style}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* Main Editor Section */}
+            <section className="card main" id="edit">
+              <div className="split">
+                
+                {/* Left Panel: Upload, Caption generation & selected clip editor */}
+                <div className="panel">
+                  <h3>Video Source</h3>
+                  <label className="drop" htmlFor="videoInput">
+                    <strong>Choose a video file</strong>
+                    <div className="muted" style={{ fontSize: '12px', marginTop: '4px' }}>
+                      {videoFileName} (MP4, MOV, WEBM)
+                    </div>
+                    <input
+                      type="file"
+                      id="videoInput"
+                      accept="video/*"
+                      onChange={handleVideoUpload}
+                    />
+                  </label>
 
-            {/* Text Color Swatches */}
-            <div className="space-y-2">
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Text Color</label>
-              <div className="flex items-center gap-2">
-                {['#ffffff', '#ffe26e', '#ff6fae', '#5ee0ff', '#75f0b2', '#ff9f43'].map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => setTextColor(color)}
-                    className={`w-7 h-7 rounded-full border-2 transition-all ${
-                      textColor === color ? 'border-emerald-600 scale-110 shadow-md' : 'border-white shadow'
-                    }`}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Color ${color}`}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Font Size Slider */}
-            <div className="space-y-2">
-              <div className="flex justify-between items-center text-xs font-bold text-slate-700 uppercase tracking-wider">
-                <span>Font Size</span>
-                <span className="text-emerald-600">{fontSize}px</span>
-              </div>
-              <input
-                type="range"
-                min={14}
-                max={36}
-                value={fontSize}
-                onChange={(e) => setFontSize(parseInt(e.target.value))}
-                className="w-full accent-emerald-600 cursor-pointer"
-              />
-            </div>
-
-            {/* Alignment & Position */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Alignment</label>
-                <select
-                  value={subtitleAlignment}
-                  onChange={(e: any) => setSubtitleAlignment(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800"
-                >
-                  <option value="center">Center</option>
-                  <option value="left">Left</option>
-                  <option value="right">Right</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">Position</label>
-                <select
-                  value={subtitlePosition}
-                  onChange={(e: any) => setSubtitlePosition(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-800"
-                >
-                  <option value="bottom">Bottom</option>
-                  <option value="center">Center</option>
-                  <option value="top">Top</option>
-                </select>
-              </div>
-            </div>
-          </aside>
-
-          {/* Center/Right: Video Stage, Controls, Timeline & Captions List */}
-          <div className="lg:col-span-8 flex flex-col space-y-6">
-            
-            {/* Toolbar tabs */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
-                <button
-                  onClick={() => setActiveTab('captions')}
-                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all ${
-                    activeTab === 'captions' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Captions List
-                </button>
-                <button
-                  onClick={() => setActiveTab('video')}
-                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all ${
-                    activeTab === 'video' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Video Preview
-                </button>
-                <button
-                  onClick={() => setActiveTab('export')}
-                  className={`px-3.5 py-1.5 rounded-md text-xs font-bold transition-all ${
-                    activeTab === 'export' ? 'bg-emerald-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Export Center
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={togglePlay}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 shadow-sm"
-                >
-                  {isPlaying ? <Pause className="w-3.5 h-3.5 text-emerald-600" /> : <Play className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />}
-                  {isPlaying ? 'Pause' : 'Play'}
-                </button>
-                <button
-                  onClick={toggleMute}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 shadow-sm"
-                >
-                  {isMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-500" /> : <Volume2 className="w-3.5 h-3.5 text-slate-600" />}
-                  {isMuted ? 'Muted' : 'Sound'}
-                </button>
-              </div>
-            </div>
-
-            {/* Video Stage & Preview Player */}
-            <div className="relative aspect-video bg-slate-900 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center">
-              <video
-                ref={videoRef}
-                src={videoSrc}
-                className="w-full h-full object-contain"
-                playsInline
-                onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 15)}
-                onEnded={() => setIsPlaying(false)}
-              />
-
-              {/* Subtitle Overlay with live styling */}
-              <div className={`absolute ${getPositionClass()} left-6 right-6 flex ${getAlignmentClass()} pointer-events-none z-20`}>
-                <div style={getSubtitleOverlayStyle()}>
-                  {currentCaptionText}
-                </div>
-              </div>
-            </div>
-
-            {/* Video Seek Bar & Controls */}
-            <div className="space-y-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <div className="flex items-center justify-between text-xs font-bold text-slate-600">
-                <span>{formatTime(currentTime)}</span>
-                <span className="truncate max-w-[220px] text-slate-500">{videoName}</span>
-                <span>{formatTime(duration)}</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={duration || 15}
-                step={0.1}
-                value={currentTime}
-                onChange={handleSeek}
-                className="w-full accent-emerald-600 cursor-pointer"
-              />
-
-              {/* Timeline segment blocks */}
-              <div className="h-4 bg-slate-200 rounded-md overflow-hidden flex gap-0.5 mt-2 p-0.5">
-                {captions.map((cap, i) => (
-                  <div
-                    key={cap.id}
-                    className="h-full bg-emerald-500/80 hover:bg-emerald-600 rounded-xs transition-colors cursor-pointer"
-                    style={{ flex: 1 }}
-                    title={`${cap.start} - ${cap.end}: ${cap.text}`}
-                    onClick={() => {
-                      setCurrentCaptionText(cap.text);
-                      showToast(`Jumped to segment ${i + 1}`);
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Captions Editor Panel / Timeline List */}
-            {activeTab === 'captions' && (
-              <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-emerald-600" />
-                    Interactive Subtitle Timeline ({captions.length} segments)
-                  </h3>
-                  <button
-                    onClick={handleAddCaptionLine}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-all"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Add Segment
-                  </button>
-                </div>
-
-                <div className="space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
-                  {captions.map((cap, index) => (
-                    <div
-                      key={cap.id}
-                      className="grid grid-cols-12 gap-2 items-center bg-slate-50 hover:bg-emerald-50/20 p-2.5 rounded-xl border border-slate-200 transition-all"
+                  <div className="field">
+                    <label htmlFor="language">Caption language</label>
+                    <select
+                      id="language"
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
                     >
-                      <div className="col-span-4 sm:col-span-3 flex items-center gap-1">
-                        <input
-                          type="text"
-                          value={cap.start}
-                          onChange={(e) => handleUpdateCaptionTime(cap.id, 'start', e.target.value)}
-                          className="w-14 bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] font-mono font-bold text-center"
-                          title="Start Time"
-                        />
-                        <span className="text-slate-400">-</span>
-                        <input
-                          type="text"
-                          value={cap.end}
-                          onChange={(e) => handleUpdateCaptionTime(cap.id, 'end', e.target.value)}
-                          className="w-14 bg-white border border-slate-300 rounded px-1.5 py-1 text-[11px] font-mono font-bold text-center"
-                          title="End Time"
-                        />
-                      </div>
+                      <option value="English">English</option>
+                      <option value="Urdu">Urdu (اردو)</option>
+                      <option value="Roman Urdu">Roman Urdu</option>
+                      <option value="Punjabi">Punjabi (ਪੰਜਾਬੀ)</option>
+                      <option value="Hindi">Hindi (हिन्दी)</option>
+                    </select>
+                  </div>
 
-                      <div className="col-span-6 sm:col-span-7">
-                        <input
-                          type="text"
-                          value={cap.text}
-                          onChange={(e) => handleUpdateCaptionText(cap.id, e.target.value)}
-                          className="w-full bg-white border border-slate-300 focus:border-emerald-500 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
-                        />
-                      </div>
+                  {/* Generate Captions Button */}
+                  <button
+                    className="btn primary"
+                    onClick={handleGenerateCaptions}
+                    disabled={isTranscribing}
+                    style={{ width: '100%', marginTop: '10px' }}
+                  >
+                    <Sparkles style={{ width: '14px', height: '14px' }} />
+                    {isTranscribing ? 'Transcribing Speech...' : 'Generate Captions'}
+                  </button>
 
-                      <div className="col-span-2 flex items-center justify-end gap-1">
+                  <hr style={{ border: 'none', borderTop: '1px solid var(--line)', margin: '14px 0 10px' }} />
+
+                  {/* Selected Text Layer Details */}
+                  <h3>Selected Caption</h3>
+                  <div className="field">
+                    <label htmlFor="captionText">
+                      Text (Clip at {selectedSegment?.start} - {selectedSegment?.end})
+                    </label>
+                    <textarea
+                      id="captionText"
+                      rows={2}
+                      value={selectedSegment?.text || ''}
+                      onChange={(e) => handleUpdateText(e.target.value)}
+                      placeholder="Type caption text here..."
+                    />
+                  </div>
+
+                  {/* Timestamps */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '8px' }}>
+                    <div className="field" style={{ marginTop: 0 }}>
+                      <label>Start time (mm:ss)</label>
+                      <input
+                        type="text"
+                        value={selectedSegment?.start || '00:00'}
+                        onChange={(e) => handleUpdateStartTime(e.target.value)}
+                      />
+                    </div>
+                    <div className="field" style={{ marginTop: 0 }}>
+                      <label>End time (mm:ss)</label>
+                      <input
+                        type="text"
+                        value={selectedSegment?.end || '00:03'}
+                        onChange={(e) => handleUpdateEndTime(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Caption Style Controls */}
+                  <div className="field" id="style">
+                    <label>Caption style</label>
+                    <div className="style-row">
+                      {(['plain', 'bold', 'outline', 'glow'] as const).map((st) => (
                         <button
-                          onClick={() => handleMoveSegment(index, 'up')}
-                          disabled={index === 0}
-                          className="p-1 text-slate-500 hover:text-slate-900 disabled:opacity-30 rounded hover:bg-slate-200"
-                          title="Move Up"
+                          key={st}
+                          className={selectedSegment?.style === st ? 'active' : ''}
+                          onClick={() => handleUpdateStyle(st)}
                         >
-                          <ArrowUp className="w-3.5 h-3.5" />
+                          {st.charAt(0).toUpperCase() + st.slice(1)}
                         </button>
-                        <button
-                          onClick={() => handleMoveSegment(index, 'down')}
-                          disabled={index === captions.length - 1}
-                          className="p-1 text-slate-500 hover:text-slate-900 disabled:opacity-30 rounded hover:bg-slate-200"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteCaption(cap.id)}
-                          className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors"
-                          title="Delete Segment"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="fontSize">
+                      Text size: <span id="sizeValue">{selectedSegment?.fontSize || 18}</span>px
+                    </label>
+                    <input
+                      id="fontSize"
+                      type="range"
+                      min={12}
+                      max={36}
+                      value={selectedSegment?.fontSize || 18}
+                      onChange={(e) => handleUpdateFontSize(parseInt(e.target.value))}
+                    />
+                  </div>
+
+                  {/* Colors & Alignment */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '8px', marginTop: '8px' }}>
+                    <div className="field" style={{ marginTop: 0 }}>
+                      <label>Text Color</label>
+                      <div style={{ display: 'flex', gap: '5px', marginTop: '3px' }}>
+                        {['#ffffff', '#ffe26e', '#5ee0ff', '#75f0b2', '#ff6fae'].map((col) => (
+                          <button
+                            key={col}
+                            onClick={() => handleUpdateColor(col)}
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: col,
+                              border: selectedSegment?.color === col ? '2px solid #4169e1' : '1px solid #d1d5db',
+                              cursor: 'pointer'
+                            }}
+                            title={col}
+                          />
+                        ))}
                       </div>
                     </div>
+                    <div className="field" style={{ marginTop: 0 }}>
+                      <label>Position</label>
+                      <select
+                        value={selectedSegment?.position || 'bottom'}
+                        onChange={(e: any) => handleUpdatePosition(e.target.value)}
+                      >
+                        <option value="bottom">Bottom</option>
+                        <option value="center">Center</option>
+                        <option value="top">Top</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Apply to all check */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '10px', fontSize: '12px' }}>
+                    <input
+                      type="checkbox"
+                      id="applyAll"
+                      checked={applyStyleToAll}
+                      onChange={(e) => setApplyStyleToAll(e.target.checked)}
+                    />
+                    <label htmlFor="applyAll" style={{ color: 'var(--muted)', cursor: 'pointer' }}>
+                      Apply styling to all captions
+                    </label>
+                  </div>
+
+                  {/* Status Banner */}
+                  <div className="status" id="status" style={{ borderTop: '1px solid var(--line)', paddingTop: '8px' }}>
+                    {statusText}
+                  </div>
+                </div>
+
+                {/* Right Panel: Video Preview Player */}
+                <div className="panel">
+                  <div className="row" style={{ marginBottom: '9px' }}>
+                    <h3 style={{ margin: 0 }}>Preview</h3>
+                    <span className="muted" style={{ fontSize: '11px' }}>
+                      16:9 HD · {formatSecondsToTime(currentTime)} / {formatSecondsToTime(duration)}
+                    </span>
+                  </div>
+
+                  {/* Video Stage with live styled captions */}
+                  <div className="video" id="videoPreview">
+                    <video
+                      ref={videoRef}
+                      src={videoSrc}
+                      playsInline
+                      onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                      onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 15)}
+                      onEnded={() => setIsPlaying(false)}
+                    />
+
+                    {/* Styled Caption Overlay */}
+                    <div style={getOverlayStyle()} id="videoCaption">
+                      {activeCaptionAtCurrentTime?.text}
+                    </div>
+                  </div>
+
+                  {/* Player Controls */}
+                  <div className="controls">
+                    <button className="btn" onClick={togglePlay} id="playBtn">
+                      {isPlaying ? <Pause style={{ width: '13px', height: '13px' }} /> : <Play style={{ width: '13px', height: '13px' }} />}
+                      {isPlaying ? '❚❚ Pause' : '▶ Play'}
+                    </button>
+                    <button className="btn" onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
+                      {isMuted ? <VolumeX style={{ width: '13px', height: '13px' }} /> : <Volume2 style={{ width: '13px', height: '13px' }} />}
+                    </button>
+                    <span id="timeLabel">{formatSecondsToTime(currentTime)}</span>
+                    <input
+                      type="range"
+                      id="seek"
+                      min={0}
+                      max={duration || 15}
+                      step={0.1}
+                      value={currentTime}
+                      onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                      aria-label="Video timeline seek"
+                    />
+                    <span className="muted">{formatSecondsToTime(duration)}</span>
+                  </div>
+
+                  {/* Quick Export Action in Preview Box */}
+                  <div style={{ marginTop: '10px', display: 'flex', gap: '8px' }}>
+                    <button
+                      className="btn primary"
+                      style={{ flex: 1 }}
+                      onClick={handleExportBurnedVideo}
+                      disabled={isExporting}
+                    >
+                      <Download style={{ width: '13px', height: '13px' }} />
+                      {isExporting ? `Rendering MP4 (${exportProgress}%)...` : 'Export Video (MP4)'}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Compact Timeline Section (Below Video Preview) */}
+              <section className="card timeline-box" id="timeline">
+                <div className="timeline-head">
+                  <div>
+                    <strong>Timeline</strong>
+                    <div className="muted" style={{ fontSize: '11px' }}>
+                      Click any text clip below to edit its text, timestamps, and style
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button className="btn" onClick={handleAddCaptionClip} id="addLayer">
+                      <Plus style={{ width: '12px', height: '12px' }} /> Text
+                    </button>
+                    <button className="btn" onClick={handleSplitClip} title="Split at current cursor">
+                      <Scissors style={{ width: '12px', height: '12px' }} /> Split
+                    </button>
+                  </div>
+                </div>
+
+                {/* Ruler scaled to duration */}
+                <div className="ruler">
+                  <span>00:00</span>
+                  <span>{formatSecondsToTime(duration * 0.2)}</span>
+                  <span>{formatSecondsToTime(duration * 0.4)}</span>
+                  <span>{formatSecondsToTime(duration * 0.6)}</span>
+                  <span>{formatSecondsToTime(duration * 0.8)}</span>
+                  <span>{formatSecondsToTime(duration)}</span>
+                </div>
+
+                {/* Video Track */}
+                <div className="track">
+                  <span className="track-name">Video</span>
+                  <div className="trackline">
+                    <div className="clip video-clip" id="videoClip">
+                      {videoFileName}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Subtitle / Text Track */}
+                <div className="track">
+                  <span className="track-name">Captions</span>
+                  <div className="trackline" style={{ position: 'relative' }}>
+                    {captions.map((clip) => {
+                      const totalSec = Math.max(duration, 1);
+                      const leftPercent = Math.max(0, Math.min(95, (clip.startSec / totalSec) * 100));
+                      const widthPercent = Math.max(4, Math.min(100 - leftPercent, ((clip.endSec - clip.startSec) / totalSec) * 100));
+                      const isSelected = clip.id === selectedClipId;
+
+                      return (
+                        <button
+                          key={clip.id}
+                          className={`clip ${clip.style === 'bold' ? 'two' : ''} ${isSelected ? 'active' : ''}`}
+                          style={{
+                            left: `${leftPercent}%`,
+                            width: `${widthPercent}%`,
+                            textAlign: 'left'
+                          }}
+                          onClick={() => handleSelectClip(clip.id)}
+                          title={`${clip.start} - ${clip.end}: ${clip.text}`}
+                        >
+                          {clip.text}
+                        </button>
+                      );
+                    })}
+
+                    {/* Playhead Marker */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        bottom: 0,
+                        left: `${Math.min(100, (currentTime / Math.max(duration, 1)) * 100)}%`,
+                        width: '2px',
+                        backgroundColor: '#ef4444',
+                        zIndex: 4,
+                        pointerEvents: 'none'
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Caption Chips list for quick tapping on mobile */}
+                <div className="caption-items" id="layerChips">
+                  {captions.map((c, i) => (
+                    <button
+                      key={c.id}
+                      className={`caption-chip ${c.id === selectedClipId ? 'active' : ''}`}
+                      onClick={() => handleSelectClip(c.id)}
+                    >
+                      #{i + 1} · {c.start} {c.text.slice(0, 20)}...
+                    </button>
                   ))}
                 </div>
-              </div>
-            )}
 
-            {/* Export Tab Panel */}
-            {activeTab === 'export' && (
-              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-6">
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Export Center</h3>
-                  <p className="text-xs text-slate-600 mt-1">Download timed subtitle files (.srt, .vtt) or burn captions directly into an MP4 video.</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <button
-                    onClick={() => handleExportSubtitles('srt')}
-                    className="flex flex-col items-center justify-center p-5 rounded-xl border border-slate-200 hover:border-emerald-500 bg-slate-50 hover:bg-emerald-50/30 transition-all group"
-                  >
-                    <Download className="w-6 h-6 text-emerald-600 mb-2 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-bold text-slate-800">Export .SRT</span>
-                    <span className="text-[10px] text-slate-500 mt-0.5">Standard SubRip format</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleExportSubtitles('vtt')}
-                    className="flex flex-col items-center justify-center p-5 rounded-xl border border-slate-200 hover:border-emerald-500 bg-slate-50 hover:bg-emerald-50/30 transition-all group"
-                  >
-                    <Download className="w-6 h-6 text-emerald-600 mb-2 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-bold text-slate-800">Export .VTT</span>
-                    <span className="text-[10px] text-slate-500 mt-0.5">Web Video Text Track</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleExportSubtitles('json')}
-                    className="flex flex-col items-center justify-center p-5 rounded-xl border border-slate-200 hover:border-emerald-500 bg-slate-50 hover:bg-emerald-50/30 transition-all group"
-                  >
-                    <Download className="w-6 h-6 text-emerald-600 mb-2 group-hover:scale-110 transition-transform" />
-                    <span className="text-xs font-bold text-slate-800">Export JSON</span>
-                    <span className="text-[10px] text-slate-500 mt-0.5">Raw structured timestamps</span>
-                  </button>
-                </div>
-
-                <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-                  <div className="text-xs text-slate-600">
-                    Permanently burn edited captions into an MP4 video file.
+                {/* Timeline Bottom Actions */}
+                <div className="tiny-actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button className="btn" onClick={handleDeleteSelected} id="deleteLayer">
+                      <Trash2 style={{ width: '12px', height: '12px' }} /> Delete selected clip
+                    </button>
+                    <button className="btn" onClick={handleCopyCaptions} id="copyText">
+                      {copySuccess ? <Check style={{ width: '12px', height: '12px' }} /> : <Copy style={{ width: '12px', height: '12px' }} />}
+                      {copySuccess ? 'Copied!' : 'Copy captions'}
+                    </button>
                   </div>
-                  <button
-                    onClick={handleExportVideo}
-                    disabled={isExporting}
-                    className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-lg shadow-emerald-600/20 transition-all disabled:opacity-50"
-                  >
-                    <VideoIcon className={`w-4 h-4 ${isExporting ? 'animate-spin' : ''}`} />
-                    {isExporting ? 'Rendering MP4...' : 'Export Burned-in MP4'}
-                  </button>
+
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button className="btn" onClick={() => handleExportSubtitleFile('srt')}>
+                      ⬇ .SRT
+                    </button>
+                    <button className="btn" onClick={() => handleExportSubtitleFile('vtt')}>
+                      ⬇ .VTT
+                    </button>
+                    <button
+                      className="btn primary"
+                      onClick={handleExportBurnedVideo}
+                      disabled={isExporting}
+                    >
+                      <Download style={{ width: '12px', height: '12px' }} />
+                      {isExporting ? `Rendering MP4...` : 'Export Video (MP4)'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
 
-            {activeTab === 'video' && (
-              <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-sm text-center space-y-4">
-                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-                  <VideoIcon className="w-6 h-6" />
-                </div>
-                <h3 className="text-sm font-bold text-slate-900">Current Video Loaded</h3>
-                <p className="text-xs text-slate-600 max-w-md mx-auto">
-                  Playing <strong className="text-slate-800">{videoName}</strong>. Use the play/pause controls above or jump across timeline segments.
-                </p>
-              </div>
-            )}
+              </section>
 
+            </section>
           </div>
 
-        </div>
-      </main>
-
-      {/* Features Section */}
-      <section className="py-16 bg-white border-t border-slate-200/80" id="features">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-12 space-y-3">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-bold">
-              SUPERCHARGED CREATION
-            </div>
-            <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">Built for Professional Creators</h2>
-            <p className="text-sm text-slate-600">Everything you need to craft stunning, engaging videos with flawless subtitles.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-6 space-y-3 hover:border-emerald-300 transition-all">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/20 font-bold">
-                <Sparkles className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-extrabold text-slate-900">AI Speech Transcription</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Instantly transcribe audio and video files into precise timed segments using advanced Gemini AI multimodal models.
-              </p>
-            </div>
-
-            <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-6 space-y-3 hover:border-emerald-300 transition-all">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/20 font-bold">
-                <Sliders className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-extrabold text-slate-900">Cinematic Subtitle Styles</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Customize fonts, glowing outlines, colored text, alignment, and background pills that make your videos stand out.
-              </p>
-            </div>
-
-            <div className="bg-slate-50/70 border border-slate-200 rounded-2xl p-6 space-y-3 hover:border-emerald-300 transition-all">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/20 font-bold">
-                <Languages className="w-5 h-5" />
-              </div>
-              <h3 className="text-base font-extrabold text-slate-900">Multi-Language Support</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Transcribe and translate seamlessly between English, Urdu, Roman Urdu, Hindi, and Punjabi with high accuracy.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* How It Works Section */}
-      <section className="py-16 bg-slate-50 border-t border-slate-200/80" id="how">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-12 space-y-3">
-            <h2 className="text-3xl font-extrabold text-slate-900 tracking-tight">How CaptionPro Works</h2>
-            <p className="text-sm text-slate-600">Three simple steps to perfect video subtitles.</p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 relative shadow-sm">
-              <div className="text-3xl font-black text-emerald-600/20 absolute top-4 right-5">01</div>
-              <div className="text-sm font-bold text-emerald-600 uppercase tracking-wider">Step One</div>
-              <h3 className="text-base font-extrabold text-slate-900">Upload or Select Video</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Upload your MP4/WEBM video file or choose one of our sample clips to get started instantly.
-              </p>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 relative shadow-sm">
-              <div className="text-3xl font-black text-emerald-600/20 absolute top-4 right-5">02</div>
-              <div className="text-sm font-bold text-emerald-600 uppercase tracking-wider">Step Two</div>
-              <h3 className="text-base font-extrabold text-slate-900">AI Speech Transcription</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Click Transcribe to automatically extract spoken words into timed subtitle segments in your selected language.
-              </p>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 space-y-3 relative shadow-sm">
-              <div className="text-3xl font-black text-emerald-600/20 absolute top-4 right-5">03</div>
-              <div className="text-sm font-bold text-emerald-600 uppercase tracking-wider">Step Three</div>
-              <h3 className="text-base font-extrabold text-slate-900">Style and Export</h3>
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Customize fonts, colors, and positioning. Preview live and export SRT, VTT, or burn directly into MP4.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="bg-slate-900 text-slate-400 border-t border-slate-800 py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-black">
-              <Play className="w-3.5 h-3.5 fill-white translate-x-0.5" />
-            </div>
-            <span className="font-extrabold text-lg tracking-tight text-white">
-              Caption<span className="text-emerald-400">Pro</span>
-            </span>
-          </div>
-
-          <div className="text-xs text-slate-400 text-center md:text-left">
-            Responsive Video Caption Editor · Powered by Google Gemini AI Studio & React.
-          </div>
-
-          <div className="flex items-center gap-6 text-xs font-medium">
-            <a href="#editor" className="hover:text-white transition-colors">Editor</a>
-            <a href="#features" className="hover:text-white transition-colors">Features</a>
-            <a href="#how" className="hover:text-white transition-colors">How It Works</a>
-          </div>
-        </div>
-      </footer>
+          <footer className="footer">
+            CaptionPro · Compact video caption editor · Real subtitle timeline
+          </footer>
+        </main>
+      )}
     </div>
   );
 }

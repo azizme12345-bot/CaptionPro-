@@ -110,37 +110,50 @@ async function startServer() {
       console.log("Starting transcription for file:", filePath);
       const language = req.body.language || 'English';
       
-      audioPath = path.join(path.dirname(filePath), `${Date.now()}-audio.mp3`);
-      
-      await new Promise((resolve, reject) => {
-        ffmpeg(filePath)
-          .toFormat('mp3')
-          .save(audioPath)
-          .on('end', resolve)
-          .on('error', reject);
-      });
-      
-      console.log("Audio extracted to:", audioPath);
-      const audioBuffer = fs.readFileSync(audioPath);
-      const base64Audio = audioBuffer.toString('base64');
+      let mediaPart: { inlineData: { mimeType: string; data: string } };
+      let modelToUse = 'gemini-3.5-transcribe';
 
-      const audioPart = {
-        inlineData: {
-          mimeType: 'audio/mp3',
-          data: base64Audio
-        }
-      };
+      try {
+        audioPath = path.join(path.dirname(filePath), `${Date.now()}-audio.mp3`);
+        await new Promise((resolve, reject) => {
+          ffmpeg(filePath)
+            .toFormat('mp3')
+            .save(audioPath)
+            .on('end', resolve)
+            .on('error', reject);
+        });
+        console.log("Audio extracted to:", audioPath);
+        const audioBuffer = fs.readFileSync(audioPath);
+        mediaPart = {
+          inlineData: {
+            mimeType: 'audio/mp3',
+            data: audioBuffer.toString('base64')
+          }
+        };
+      } catch (extractErr) {
+        console.warn("Audio extraction fallback to direct video file:", extractErr);
+        const videoBuffer = fs.readFileSync(filePath);
+        mediaPart = {
+          inlineData: {
+            mimeType: req.file?.mimetype || 'video/mp4',
+            data: videoBuffer.toString('base64')
+          }
+        };
+        modelToUse = 'gemini-3.8-flash';
+      }
 
-      const prompt = `Transcribe the audio into timed subtitle segments. Target Language: ${language}.
-      Provide sequential segments with start time, end time (mm:ss format), and transcript text.
+      const prompt = `Transcribe the spoken words from this media into sequential timed subtitle segments. 
+      Target Language: ${language}.
+      (Note: If Roman Urdu is selected, write spoken Urdu phonetically in the Latin alphabet).
+      Provide segments with start time and end time (format mm:ss) and transcript text.
       Return strictly JSON matching this schema:
       [
         { "start": "00:00", "end": "00:03", "text": "..." }
       ]`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.5-transcribe',
-        contents: { parts: [audioPart, { text: prompt }] },
+        model: modelToUse,
+        contents: { parts: [mediaPart, { text: prompt }] },
         config: {
           responseMimeType: 'application/json',
           responseSchema: {

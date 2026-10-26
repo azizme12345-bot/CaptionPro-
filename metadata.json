@@ -1,0 +1,6 @@
+{
+  "name": "CaptionPro – AI Video Caption Editor",
+  "description": "A professional, responsive online video caption editor powered by AI with subtitle styling, multi-language support, and interactive timeline editing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

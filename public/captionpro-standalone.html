@@ -1,0 +1,691 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="CaptionPro makes video captions simple. Preview captions and prepare short videos for editing.">
+<title>CaptionPro — Video Captions</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--text:#182230;--muted:#6b7280;--line:#e4e8ef;--blue:#4169e1;--blue2:#edf2ff;--shadow:0 8px 24px #15233b0b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+button,input,select,textarea{font:inherit}
+button,a{cursor:pointer}
+a{color:inherit;text-decoration:none}
+.top{height:58px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 max(16px,calc((100% - 1050px)/2));position:sticky;top:0;z-index:5}
+.brand{display:flex;align-items:center;gap:9px;font-size:18px;font-weight:800}
+.logo{width:30px;height:30px;border-radius:9px;background:#4169e1;color:white;display:grid;place-items:center;font-size:13px}
+.btn{border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 13px;font-weight:650;color:var(--text);display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn:hover{background:#f8fafc}
+.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.primary:hover{background:#3558c7}
+.wrap{max-width:1050px;margin:auto;padding:20px 16px}
+.muted{color:var(--muted)}
+.card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+h1,h2,h3,p{margin-top:0}
+h1{font-size:clamp(27px,4vw,40px);line-height:1.12;letter-spacing:-1px;margin-bottom:12px}
+h2{font-size:20px;margin-bottom:8px}
+h3{font-size:15px;margin-bottom:10px}
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:24px;align-items:center;padding:22px 0}
+.hero p{max-width:470px;color:var(--muted);line-height:1.7}
+.preview{position:relative;aspect-ratio:16/10;border-radius:12px;overflow:hidden;background:linear-gradient(145deg,#dbeafe,#94a3b8 48%,#334155);display:grid;place-items:center}
+.preview:before{content:"";position:absolute;left:-10%;right:-10%;bottom:0;height:55%;background:linear-gradient(145deg,#64748b,#1e3a5f);clip-path:polygon(0 100%,22% 30%,40% 75%,61% 10%,78% 65%,100% 20%,100% 100%)}
+.sample{position:absolute;bottom:15%;left:6%;right:6%;text-align:center;color:white;font-size:20px;font-weight:850;text-shadow:0 2px 5px #000b;z-index:2}
+.hero-actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:18px}
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.feature{padding:16px}
+.feature p{color:var(--muted);margin:0;font-size:13px}
+.editor{display:grid;grid-template-columns:205px minmax(0,1fr);gap:14px}
+.side{padding:14px}
+.side a{display:block;padding:10px;border-radius:8px;margin:3px 0;color:#566173;font-weight:600}
+.side a.active{background:var(--blue2);color:var(--blue);font-weight:700}
+.main{padding:14px;min-width:0}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.split{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.panel{border:1px solid var(--line);border-radius:11px;padding:12px;min-width:0}
+.drop{border:1px dashed #b7c4d8;border-radius:10px;padding:17px 10px;text-align:center;background:#fafcff;cursor:pointer;display:block}
+.drop:hover{border-color:var(--blue)}
+.drop input{display:none}
+.field{display:grid;gap:5px;margin-top:11px}
+.field label{font-weight:650;font-size:12px;color:#4b5563}
+.field select,.field input,.field textarea{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px;background:#fff;color:var(--text);outline:none}
+.field select:focus,.field input:focus,.field textarea:focus{border-color:var(--blue)}
+.style-row{display:flex;gap:6px}
+.style-row button{flex:1;padding:8px 4px;border:1px solid var(--line);border-radius:8px;background:#fff;font-weight:600;font-size:12px}
+.style-row button.active{border-color:var(--blue);background:var(--blue2);color:var(--blue)}
+.video{aspect-ratio:16/9;background:linear-gradient(160deg,#dbeafe,#64748b 48%,#243b53);border-radius:9px;overflow:hidden;position:relative;display:grid;place-items:center}
+.video video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#111}
+.video-caption{position:absolute;bottom:12%;left:4%;right:4%;text-align:center;color:white;font-size:18px;font-weight:800;text-shadow:0 2px 5px #000;background:rgba(0,0,0,0.65);padding:4px 10px;border-radius:6px;width:fit-content;max-width:92%;margin:0 auto;pointer-events:none;z-index:3;word-break:break-word}
+.controls{display:flex;align-items:center;gap:9px;padding:9px 0;color:var(--muted);font-size:12px}
+.controls input{flex:1;min-width:0;accent-color:var(--blue)}
+.timeline-box{margin-top:12px;padding:12px}
+.timeline-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ruler{display:grid;grid-template-columns:repeat(6,1fr);color:#8993a4;font-size:10px;margin-left:76px;margin-bottom:5px}
+.track{display:grid;grid-template-columns:68px minmax(0,1fr);gap:8px;align-items:center;margin:7px 0}
+.track-name{font-size:11px;font-weight:700;color:#596579;white-space:nowrap}
+.trackline{height:32px;border-radius:6px;background:#f3f5f9;position:relative;overflow:hidden;border:1px solid #e8ebf1}
+.clip{position:absolute;top:3px;bottom:3px;border-radius:4px;background:#d9e5ff;border:1px solid #a9c2ff;color:#294da8;font-size:10px;font-weight:600;padding:3px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;display:flex;align-items:center;transition:all .15s}
+.clip.active{border-color:#2563eb;background:#c3d9ff;box-shadow:0 0 0 2px rgba(37,99,235,0.4);font-weight:700}
+.clip.two{background:#d9f5e9;border-color:#9fdfc3;color:#176b4b}
+.clip.two.active{border-color:#10b981;background:#a7f3d0;box-shadow:0 0 0 2px rgba(16,185,129,0.4)}
+.clip.video-clip{background:#cbd5e1;border-color:#b6c0cd;color:#334155;width:96%;left:2%;cursor:default}
+.tiny-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;justify-content:space-between}
+.tiny-actions button{padding:7px 9px;font-size:12px}
+.caption-items{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.caption-chip{border:1px solid #d7e1f4;background:#f6f8ff;color:#354e88;border-radius:7px;padding:6px 8px;font-size:11px;cursor:pointer}
+.caption-chip.active{border-color:var(--blue);background:var(--blue2);font-weight:bold}
+.status{font-size:12px;color:var(--muted);margin-top:9px;line-height:1.4}
+.footer{padding:18px 0;color:var(--muted);font-size:12px;text-align:center}
+@media(max-width:720px){
+  .hero{grid-template-columns:1fr;gap:16px;padding-top:14px}
+  .hero .preview{max-width:520px;width:100%;margin:auto}
+  .editor{grid-template-columns:1fr}
+  .side{display:flex;gap:5px;overflow:auto;padding:8px}
+  .side .side-title{display:none}
+  .side a{white-space:nowrap;padding:8px}
+  .split{grid-template-columns:1fr}
+  .wrap{padding:12px}
+  .top{padding:0 12px}
+  .features{grid-template-columns:1fr}
+  .main{padding:9px}
+  .track{grid-template-columns:58px minmax(0,1fr);gap:5px}
+  .track-name{font-size:10px}
+  .ruler{margin-left:63px}
+  .timeline-box{padding:9px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#home" id="brandHome"><span class="logo">▶</span>CaptionPro</a>
+  <div style="display:flex;gap:8px">
+    <button class="btn" id="editorHomeBtn" style="display:none">← Home</button>
+    <button class="btn primary" id="openEditor">Editing →</button>
+  </div>
+</header>
+
+<!-- HOMEPAGE VIEW -->
+<main class="wrap" id="homeView">
+  <section class="hero">
+    <div>
+      <p style="color:#4169e1;font-weight:750;margin-bottom:9px">VIDEO CAPTIONS, MADE SIMPLE</p>
+      <h1>Add captions.<br>Edit every word.</h1>
+      <p>Upload a video, customize your caption style, and arrange text clips on a compact timeline inspired by modern video editors.</p>
+      <div class="hero-actions">
+        <button class="btn primary" id="startEditing">＋ Start Editing</button>
+        <a class="btn" href="#features">Explore Features</a>
+      </div>
+    </div>
+    <div class="card" style="padding:10px">
+      <div class="preview">
+        <div class="sample">Make every word count.</div>
+      </div>
+      <div class="row" style="padding:10px 2px 0">
+        <span class="muted">Preview · 16:9</span>
+        <span class="muted">CaptionPro</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" style="padding-top:16px">
+    <h2>Everything you need to start</h2>
+    <div class="features">
+      <article class="card feature">
+        <h3>Auto Captions</h3>
+        <p>Prepare a workflow for converting speech into synchronized subtitles.</p>
+      </article>
+      <article class="card feature">
+        <h3>Text Styling</h3>
+        <p>Adjust caption text, size, color, bold, and outline per clip.</p>
+      </article>
+      <article class="card feature">
+        <h3>Timeline Editing</h3>
+        <p>Arrange, split, and trim small caption clips on a compact track under the video.</p>
+      </article>
+    </div>
+  </section>
+  <footer class="footer">© 2026 CaptionPro · English interface</footer>
+</main>
+
+<!-- EDITOR VIEW -->
+<main class="wrap" id="editorView" hidden>
+  <div class="row" style="margin-bottom:12px">
+    <div>
+      <h2 style="margin:0">Video Editor</h2>
+      <div class="muted" style="font-size:12px">Compact timeline · English</div>
+    </div>
+    <button class="btn" id="resetBtn">Reset</button>
+  </div>
+
+  <div class="editor">
+    <aside class="card side">
+      <div class="side-title" style="font-weight:800;padding:8px">Workspace</div>
+      <a class="active" href="#edit">▣ Edit Video</a>
+      <a href="#timeline">▤ Text Layers</a>
+      <a href="#style">Aa Caption Style</a>
+    </aside>
+
+    <section class="card main" id="edit">
+      <div class="split">
+        <!-- Left Panel: Controls & Editor -->
+        <div class="panel">
+          <h3>Video</h3>
+          <label class="drop" for="videoInput">
+            <strong id="dropLabel">Choose a video</strong>
+            <div class="muted" style="font-size:12px;margin-top:4px" id="fileNameLabel">MP4, MOV, WEBM</div>
+            <input type="file" id="videoInput" accept="video/*">
+          </label>
+
+          <div class="field">
+            <label for="language">Caption language</label>
+            <select id="language">
+              <option>English</option>
+              <option>Urdu</option>
+              <option>Roman Urdu</option>
+              <option>Punjabi</option>
+              <option>Hindi</option>
+            </select>
+          </div>
+
+          <div class="field" id="style">
+            <label>Caption style</label>
+            <div class="style-row">
+              <button class="active" data-style="plain">Plain</button>
+              <button data-style="bold">Bold</button>
+              <button data-style="outline">Outline</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="captionText">Selected caption text</label>
+            <textarea id="captionText" rows="2">Make every word count.</textarea>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+            <div class="field" style="margin-top:0">
+              <label for="startTime">Start time (mm:ss)</label>
+              <input id="startTime" type="text" value="00:00">
+            </div>
+            <div class="field" style="margin-top:0">
+              <label for="endTime">End time (mm:ss)</label>
+              <input id="endTime" type="text" value="00:03">
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="fontSize">Text size: <span id="sizeValue">18</span>px</label>
+            <input id="fontSize" type="range" min="12" max="36" value="18">
+          </div>
+
+          <button class="btn primary" id="applyBtn" style="width:100%;margin-top:12px">Apply Text</button>
+          <div class="status" id="status">Ready. Select a clip to edit text or timestamps.</div>
+        </div>
+
+        <!-- Right Panel: Preview & Playback -->
+        <div class="panel">
+          <div class="row" style="margin-bottom:9px">
+            <h3 style="margin:0">Preview</h3>
+            <span class="muted" style="font-size:11px">16:9</span>
+          </div>
+
+          <div class="video" id="videoPreview">
+            <video id="realVideo" src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" playsinline></video>
+            <div class="video-caption" id="videoCaption">Make every word count.</div>
+          </div>
+
+          <div class="controls">
+            <button class="btn" id="playBtn">▶ Play</button>
+            <span id="timeLabel">00:00</span>
+            <input type="range" id="seek" min="0" max="15" step="0.1" value="0" aria-label="Video timeline">
+            <span id="durationLabel" class="muted">00:15</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compact Timeline -->
+      <section class="card timeline-box" id="timeline">
+        <div class="timeline-head">
+          <div>
+            <strong>Timeline</strong>
+            <div class="muted" style="font-size:11px">Select a small text clip to edit its caption</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn" id="addLayer">＋ Text</button>
+            <button class="btn" id="splitBtn">✂ Split</button>
+          </div>
+        </div>
+
+        <div class="ruler" id="ruler">
+          <span>00:00</span><span>00:03</span><span>00:06</span><span>00:09</span><span>00:12</span><span>00:15</span>
+        </div>
+
+        <div class="track">
+          <span class="track-name">Video</span>
+          <div class="trackline">
+            <div class="clip video-clip" id="videoClip">sample-video.mp4</div>
+          </div>
+        </div>
+
+        <div class="track">
+          <span class="track-name">Captions</span>
+          <div class="trackline" id="captionsTrack" style="position:relative">
+            <!-- Dynamic interactive clips rendered here -->
+          </div>
+        </div>
+
+        <div class="caption-items" id="layerChips">
+          <!-- Dynamic clickable chips rendered here -->
+        </div>
+
+        <div class="tiny-actions">
+          <div style="display:flex;gap:6px">
+            <button class="btn" id="deleteLayer">Delete selected clip</button>
+            <button class="btn" id="copyText">Copy captions</button>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn" id="exportSrt">.SRT</button>
+            <button class="btn" id="exportVtt">.VTT</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </div>
+  <footer class="footer">CaptionPro · Compact video editor</footer>
+</main>
+
+<script>
+// --- STATE & DATA MODEL ---
+let captions = [
+  { id: '1', start: '00:00', end: '00:03', startSec: 0, endSec: 3, text: 'Make every word count.', style: 'plain', fontSize: 18 },
+  { id: '2', start: '00:03', end: '00:07', startSec: 3, endSec: 7, text: 'Tell your story clearly.', style: 'bold', fontSize: 18 },
+  { id: '3', start: '00:07', end: '00:12', startSec: 7, endSec: 12, text: 'Capture moments that matter.', style: 'outline', fontSize: 18 }
+];
+let selectedId = '1';
+let duration = 15;
+
+const $ = id => document.getElementById(id);
+const homeView = $('homeView');
+const editorView = $('editorView');
+const video = $('realVideo');
+const caption = $('videoCaption');
+const textInput = $('captionText');
+const startInput = $('startTime');
+const endInput = $('endTime');
+const sizeInput = $('fontSize');
+const sizeValue = $('sizeValue');
+const status = $('status');
+const trackline = $('captionsTrack');
+const layerChips = $('layerChips');
+const seek = $('seek');
+const timeLabel = $('timeLabel');
+const durationLabel = $('durationLabel');
+const playBtn = $('playBtn');
+
+// Navigation
+function showEditor() {
+  homeView.hidden = true;
+  editorView.hidden = false;
+  $('editorHomeBtn').style.display = 'inline-flex';
+  window.scrollTo(0, 0);
+  render();
+}
+function showHome() {
+  editorView.hidden = true;
+  homeView.hidden = false;
+  $('editorHomeBtn').style.display = 'none';
+  window.scrollTo(0, 0);
+}
+$('openEditor').onclick = showEditor;
+$('startEditing').onclick = showEditor;
+$('editorHomeBtn').onclick = showHome;
+$('brandHome').onclick = e => { e.preventDefault(); showHome(); };
+
+// Format helpers
+function fmt(sec) {
+  if (isNaN(sec) || sec < 0) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+function toSec(str) {
+  if (!str) return 0;
+  const p = str.trim().split(':');
+  if (p.length === 2) return (parseFloat(p[0]) || 0) * 60 + (parseFloat(p[1]) || 0);
+  return parseFloat(str) || 0;
+}
+
+// Get selected clip
+function getSelected() {
+  return captions.find(c => c.id === selectedId) || captions[0];
+}
+
+// 1. MAKE CAPTION TEXT & TIMESTAMPS EDITABLE
+function populateEditor() {
+  const c = getSelected();
+  if (!c) return;
+  textInput.value = c.text;
+  startInput.value = c.start;
+  endInput.value = c.end;
+  sizeInput.value = c.fontSize || 18;
+  sizeValue.textContent = c.fontSize || 18;
+
+  document.querySelectorAll('[data-style]').forEach(b => {
+    b.classList.toggle('active', b.dataset.style === (c.style || 'plain'));
+  });
+}
+
+function updateActiveCaptionStyle() {
+  const curTime = video.currentTime;
+  const isPlaying = !video.paused;
+
+  // 5. MAKE CAPTION TEXT APPEAR AT CORRECT TIME WHILE PLAYING
+  let active = captions.find(c => curTime >= c.startSec && curTime <= c.endSec);
+  if (!isPlaying && !active) {
+    active = getSelected();
+  }
+
+  if (active && active.text.trim()) {
+    caption.style.display = 'block';
+    caption.textContent = active.text;
+    caption.style.fontSize = (active.fontSize || 18) + 'px';
+    caption.style.fontWeight = active.style === 'bold' ? '900' : '700';
+    caption.style.webkitTextStroke = active.style === 'outline' ? '1px #000' : '0';
+    caption.style.textShadow = active.style === 'outline' ? '1px 1px 0 #000, -1px -1px 0 #000, 0 2px 4px #000' : '0 2px 4px #000';
+  } else {
+    caption.style.display = 'none';
+  }
+}
+
+function applyEdits() {
+  const c = getSelected();
+  if (!c) return;
+  c.text = textInput.value;
+  c.start = startInput.value;
+  c.end = endInput.value;
+  c.startSec = toSec(startInput.value);
+  c.endSec = toSec(endInput.value);
+  c.fontSize = parseInt(sizeInput.value) || 18;
+
+  const activeStyleBtn = document.querySelector('[data-style].active');
+  c.style = activeStyleBtn ? activeStyleBtn.dataset.style : 'plain';
+
+  // Keep sorted
+  captions.sort((a, b) => a.startSec - b.startSec);
+  render();
+  updateActiveCaptionStyle();
+  status.textContent = 'Caption updated.';
+}
+
+$('applyBtn').onclick = applyEdits;
+textInput.oninput = applyEdits;
+startInput.onchange = applyEdits;
+endInput.onchange = applyEdits;
+sizeInput.oninput = () => {
+  sizeValue.textContent = sizeInput.value;
+  applyEdits();
+};
+
+document.querySelectorAll('[data-style]').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('[data-style]').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    applyEdits();
+  };
+});
+
+// Render Timeline & Chips
+function render() {
+  trackline.innerHTML = '';
+  layerChips.innerHTML = '';
+
+  const total = Math.max(duration, 1);
+
+  captions.forEach((c, index) => {
+    // 1. Timeline Clip
+    const leftPct = Math.max(0, Math.min(95, (c.startSec / total) * 100));
+    const widthPct = Math.max(4, Math.min(100 - leftPct, ((c.endSec - c.startSec) / total) * 100));
+    const isSel = c.id === selectedId;
+
+    const btn = document.createElement('button');
+    btn.className = 'clip' + (c.style === 'bold' ? ' two' : '') + (isSel ? ' active' : '');
+    btn.style.left = leftPct + '%';
+    btn.style.width = widthPct + '%';
+    btn.style.textAlign = 'left';
+    btn.textContent = c.text;
+    btn.title = `${c.start} - ${c.end}: ${c.text}`;
+    btn.onclick = () => {
+      selectedId = c.id;
+      video.currentTime = c.startSec;
+      populateEditor();
+      render();
+      updateActiveCaptionStyle();
+      status.textContent = `Selected clip ${index + 1}: ${c.start} - ${c.end}`;
+    };
+    trackline.appendChild(btn);
+
+    // 2. Caption Chip
+    const chip = document.createElement('button');
+    chip.className = 'caption-chip' + (isSel ? ' active' : '');
+    chip.textContent = `#${index + 1} · ${c.start} ${c.text.slice(0, 18)}...`;
+    chip.onclick = () => {
+      selectedId = c.id;
+      video.currentTime = c.startSec;
+      populateEditor();
+      render();
+      updateActiveCaptionStyle();
+    };
+    layerChips.appendChild(chip);
+  });
+
+  // Playhead line
+  let playhead = document.getElementById('playhead');
+  if (!playhead) {
+    playhead = document.createElement('div');
+    playhead.id = 'playhead';
+    playhead.style.position = 'absolute';
+    playhead.style.top = '0';
+    playhead.style.bottom = '0';
+    playhead.style.width = '2px';
+    playhead.style.backgroundColor = '#ef4444';
+    playhead.style.pointerEvents = 'none';
+    playhead.style.zIndex = '4';
+  }
+  playhead.style.left = `${Math.min(100, ((video.currentTime || 0) / total) * 100)}%`;
+  trackline.appendChild(playhead);
+}
+
+// 2. MAKE "DELETE SELECTED CLIP" WORK
+$('deleteLayer').onclick = () => {
+  if (captions.length <= 1) {
+    status.textContent = 'Keep at least one caption clip in the timeline.';
+    return;
+  }
+  captions = captions.filter(c => c.id !== selectedId);
+  selectedId = captions[0].id;
+  populateEditor();
+  render();
+  updateActiveCaptionStyle();
+  status.textContent = 'Selected clip deleted.';
+};
+
+// 3. MAKE "+ TEXT" ADD AT PLAYBACK TIME & "SPLIT" SPLIT SELECTED
+$('addLayer').onclick = () => {
+  const cur = Math.floor(video.currentTime || 0);
+  const end = Math.min(cur + 3, Math.floor(duration));
+  const newClip = {
+    id: String(Date.now()),
+    start: fmt(cur),
+    end: fmt(end),
+    startSec: cur,
+    endSec: end,
+    text: 'New caption text',
+    style: 'plain',
+    fontSize: 18
+  };
+  captions.push(newClip);
+  captions.sort((a, b) => a.startSec - b.startSec);
+  selectedId = newClip.id;
+  populateEditor();
+  render();
+  updateActiveCaptionStyle();
+  status.textContent = `Added new clip at ${fmt(cur)}.`;
+};
+
+$('splitBtn').onclick = () => {
+  const c = getSelected();
+  if (!c) return;
+
+  let splitSec = Math.floor(video.currentTime);
+  if (splitSec <= c.startSec || splitSec >= c.endSec) {
+    splitSec = Math.round((c.startSec + c.endSec) / 2);
+  }
+
+  const words = c.text.split(' ');
+  const half = Math.ceil(words.length / 2);
+  const part1 = words.slice(0, half).join(' ') || 'First part';
+  const part2 = words.slice(half).join(' ') || 'Second part';
+
+  const origEnd = c.end;
+  const origEndSec = c.endSec;
+
+  c.end = fmt(splitSec);
+  c.endSec = splitSec;
+  c.text = part1;
+
+  const newClip = {
+    id: String(Date.now()),
+    start: fmt(splitSec),
+    end: origEnd,
+    startSec: splitSec,
+    endSec: origEndSec,
+    text: part2,
+    style: c.style,
+    fontSize: c.fontSize
+  };
+
+  captions.push(newClip);
+  captions.sort((a, b) => a.startSec - b.startSec);
+  selectedId = newClip.id;
+  populateEditor();
+  render();
+  updateActiveCaptionStyle();
+  status.textContent = `Split clip at ${fmt(splitSec)}.`;
+};
+
+// 4. MAKE "COPY CAPTIONS", ".SRT" AND ".VTT" WORK
+function getSrtString() {
+  return captions.map((c, i) => {
+    return `${i + 1}\n00:${c.start}:000 --> 00:${c.end}:000\n${c.text}\n`;
+  }).join('\n');
+}
+
+function getVttString() {
+  return 'WEBVTT\n\n' + captions.map((c, i) => {
+    return `${i + 1}\n00:${c.start}.000 --> 00:${c.end}.000\n${c.text}\n`;
+  }).join('\n');
+}
+
+function downloadFile(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+$('copyText').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(getSrtString());
+    status.textContent = 'All captions copied to clipboard in SRT format.';
+  } catch (e) {
+    status.textContent = 'Clipboard access unavailable in this browser.';
+  }
+};
+
+$('exportSrt').onclick = () => {
+  downloadFile(getSrtString(), 'captions.srt', 'text/plain;charset=utf-8');
+  status.textContent = 'Downloaded captions.srt';
+};
+
+$('exportVtt').onclick = () => {
+  downloadFile(getVttString(), 'captions.vtt', 'text/vtt;charset=utf-8');
+  status.textContent = 'Downloaded captions.vtt';
+};
+
+// Video playback
+playBtn.onclick = () => {
+  if (video.paused) {
+    video.play();
+    playBtn.textContent = '❚❚ Pause';
+  } else {
+    video.pause();
+    playBtn.textContent = '▶ Play';
+  }
+};
+
+video.ontimeupdate = () => {
+  seek.value = video.currentTime;
+  timeLabel.textContent = fmt(video.currentTime);
+  updateActiveCaptionStyle();
+  const playhead = $('playhead');
+  if (playhead) {
+    playhead.style.left = `${Math.min(100, (video.currentTime / Math.max(duration, 1)) * 100)}%`;
+  }
+};
+
+seek.oninput = () => {
+  video.currentTime = parseFloat(seek.value);
+  timeLabel.textContent = fmt(video.currentTime);
+  updateActiveCaptionStyle();
+};
+
+video.onloadedmetadata = () => {
+  duration = video.duration || 15;
+  seek.max = duration;
+  durationLabel.textContent = fmt(duration);
+
+  // Update ruler
+  const ruler = $('ruler');
+  ruler.innerHTML = '';
+  for (let i = 0; i < 6; i++) {
+    const sp = document.createElement('span');
+    sp.textContent = fmt((duration / 5) * i);
+    ruler.appendChild(sp);
+  }
+  render();
+};
+
+// Video file upload
+$('videoInput').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  video.src = URL.createObjectURL(f);
+  $('videoClip').textContent = f.name;
+  $('fileNameLabel').textContent = f.name;
+  $('dropLabel').textContent = 'Video loaded';
+  status.textContent = `Loaded ${f.name}. Play or edit captions.`;
+};
+
+// Reset
+$('resetBtn').onclick = () => {
+  captions = [
+    { id: '1', start: '00:00', end: '00:03', startSec: 0, endSec: 3, text: 'Make every word count.', style: 'plain', fontSize: 18 },
+    { id: '2', start: '00:03', end: '00:07', startSec: 3, endSec: 7, text: 'Tell your story clearly.', style: 'bold', fontSize: 18 },
+    { id: '3', start: '00:07', end: '00:12', startSec: 7, endSec: 12, text: 'Capture moments that matter.', style: 'outline', fontSize: 18 }
+  ];
+  selectedId = '1';
+  populateEditor();
+  render();
+  updateActiveCaptionStyle();
+  status.textContent = 'Editor reset to default captions.';
+};
+
+// Init
+populateEditor();
+render();
+updateActiveCaptionStyle();
+</script>
+</body>
+</html>

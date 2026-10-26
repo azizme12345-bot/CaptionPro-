@@ -136,10 +136,10 @@ export default function App() {
   // Get current selected segment
   const selectedSegment = captions.find(c => c.id === selectedClipId) || captions[0];
 
-  // Active caption at current playback time
-  const activeCaptionAtCurrentTime = captions.find(c => {
-    return currentTime >= c.startSec && currentTime <= c.endSec;
-  }) || (captions.length > 0 ? selectedSegment : null);
+  // Active caption strictly synchronized with playback time
+  const activeCaptionAtCurrentTime = isPlaying
+    ? captions.find(c => currentTime >= c.startSec && currentTime <= c.endSec)
+    : (captions.find(c => currentTime >= c.startSec && currentTime <= c.endSec) || selectedSegment);
 
   // Switch to editor
   const handleOpenEditor = () => {

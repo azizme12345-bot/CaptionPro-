@@ -188,6 +188,8 @@ h3{font-size:15px;margin-bottom:10px}
             </select>
           </div>
 
+          <button class="btn primary" id="generateBtn" style="width:100%;margin-top:10px">✨ Generate Captions</button>
+
           <div class="field" id="style">
             <label>Caption style</label>
             <div class="style-row">
@@ -657,15 +659,163 @@ video.onloadedmetadata = () => {
   render();
 };
 
+let currentVideoFile = null;
+
+// Extract audio into compact mono WAV base64 string
+async function extractAudioBase64(fileOrBlob) {
+  const arrayBuffer = await fileOrBlob.arrayBuffer();
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const audioCtx = new AudioContextClass();
+  
+  let audioBuffer;
+  try {
+    audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  } finally {
+    if (audioCtx.state !== 'closed' && typeof audioCtx.close === 'function') {
+      try { audioCtx.close(); } catch(e) {}
+    }
+  }
+
+  // Use 16kHz for short clips and 8kHz for longer audio to keep payload small & fast
+  const targetSampleRate = audioBuffer.duration > 90 ? 8000 : 16000;
+  const length = Math.round(audioBuffer.duration * targetSampleRate);
+  const offlineCtx = new OfflineAudioContext(1, length, targetSampleRate);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = audioBuffer;
+  source.connect(offlineCtx.destination);
+  source.start(0);
+  const renderedBuffer = await offlineCtx.startRendering();
+
+  const samples = renderedBuffer.getChannelData(0);
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  function writeString(offset, str) {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  }
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, targetSampleRate, true);
+  view.setUint32(28, targetSampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+
+  // Convert binary WAV to base64 using FileReader
+  const wavBlob = new Blob([buffer], { type: 'audio/wav' });
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const dataUrl = reader.result;
+      const base64 = dataUrl.split(',')[1] || '';
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(wavBlob);
+  });
+}
+
+$('generateBtn').onclick = async () => {
+  const lang = $('language').value;
+  status.textContent = `Listening to audio and analyzing speech in ${lang}...`;
+  $('generateBtn').disabled = true;
+
+  try {
+    let res;
+    if (currentVideoFile) {
+      status.textContent = `Extracting voice audio track from ${currentVideoFile.name}...`;
+      const audioBase64 = await extractAudioBase64(currentVideoFile);
+      status.textContent = `Transcribing spoken words with Gemini AI (${lang})...`;
+      res = await fetch('/api/transcribe-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audioBase64, mimeType: 'audio/wav', language: lang })
+      });
+    } else {
+      status.textContent = `Analyzing sample clip with Gemini AI (${lang})...`;
+      res = await fetch('/api/generate-captions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: 'sample-video.mp4', language: lang, durationSeconds: Math.floor(duration) })
+      });
+    }
+
+    const rawText = await res.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error('Non-JSON response:', rawText);
+      if (res.status === 413 || rawText.includes('PayloadTooLargeError') || rawText.includes('too large')) {
+        throw new Error('Video/Audio payload exceeds the allowed size. Please upload a shorter clip.');
+      }
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}: ${res.statusText || 'Error processing request'}`);
+      }
+      throw new Error('Server returned an unexpected response format. Please try again.');
+    }
+
+    if (data.error === 'MISSING_API_KEY') {
+      status.textContent = 'API key required: Vercel Project Settings > Environment Variables میں GEMINI_API_KEY شامل کریں۔';
+      return;
+    }
+
+    if (data.error) {
+      throw new Error(data.message || data.error);
+    }
+
+    if (data.captions && Array.isArray(data.captions) && data.captions.length > 0) {
+      captions = data.captions.map((item, idx) => ({
+        id: String(Date.now() + idx),
+        start: item.start || '00:00',
+        end: item.end || '00:03',
+        startSec: toSec(item.start || '00:00'),
+        endSec: toSec(item.end || '00:03'),
+        text: item.text || 'Caption',
+        style: 'plain',
+        fontSize: 18
+      }));
+      captions.sort((a, b) => a.startSec - b.startSec);
+      selectedId = captions[0].id;
+      populateEditor();
+      render();
+      updateActiveCaptionStyle();
+      status.textContent = `✨ Transcribed ${captions.length} speech segments in ${lang}!`;
+    } else {
+      throw new Error(data.error || 'No speech segments returned');
+    }
+  } catch (err) {
+    status.textContent = `Transcription notice: ${err.message || 'Server error'}. Please verify GEMINI_API_KEY.`;
+  } finally {
+    $('generateBtn').disabled = false;
+  }
+};
+
 // Video file upload
 $('videoInput').onchange = e => {
   const f = e.target.files[0];
   if (!f) return;
+  currentVideoFile = f;
   video.src = URL.createObjectURL(f);
   $('videoClip').textContent = f.name;
   $('fileNameLabel').textContent = f.name;
   $('dropLabel').textContent = 'Video loaded';
-  status.textContent = `Loaded ${f.name}. Play or edit captions.`;
+  status.textContent = `Loaded ${f.name}. Click "✨ Generate Captions" to transcribe speech.`;
 };
 
 // Reset

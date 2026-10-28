@@ -866,6 +866,11 @@ export default function App() {
     setStatusMessage('Rendering video with real-time audio and captions...');
     setStatusType('info');
 
+    let canvasStream: MediaStream | null = null;
+    let audioStream: MediaStream | null = null;
+    let combinedStream: MediaStream | null = null;
+    const chunks: Blob[] = [];
+
     try {
       const origPlaying = !video.paused;
       const origTime = video.currentTime;
@@ -874,9 +879,20 @@ export default function App() {
 
       let rawWidth = video.videoWidth || 1280;
       let rawHeight = video.videoHeight || 720;
+
+      // 1. Detect mobile device (userAgent check or screen width under 768px)
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+      // 2. On mobile, cap max height at 720px while preserving aspect ratio
+      if (isMobile && rawHeight > 720) {
+        const ratio = rawWidth / rawHeight;
+        rawHeight = 720;
+        rawWidth = Math.round(rawHeight * ratio);
+      }
+
       // Ensure width and height are even numbers for H.264/yuv420p compatibility
-      const width = rawWidth % 2 !== 0 ? rawWidth - 1 : rawWidth;
-      const height = rawHeight % 2 !== 0 ? rawHeight - 1 : rawHeight;
+      let width = rawWidth % 2 !== 0 ? rawWidth - 1 : rawWidth;
+      let height = rawHeight % 2 !== 0 ? rawHeight - 1 : rawHeight;
 
       const canvas = document.createElement('canvas');
       canvas.width = width;
@@ -912,11 +928,10 @@ export default function App() {
 
       const fileExt = 'mp4';
 
-      // 1. Capture video stream from canvas at 30 fps
-      const canvasStream = canvas.captureStream(30);
+      // Capture video stream from canvas at 30 fps
+      canvasStream = canvas.captureStream(30);
 
-      // 2. Capture audio stream from video element (Stereo 44100Hz)
-      let audioStream: MediaStream | null = null;
+      // Capture audio stream from video element (Stereo 44100Hz)
       try {
         if ((video as any).captureStream) {
           const vidCaptured = (video as any).captureStream();
@@ -943,16 +958,21 @@ export default function App() {
       }
 
       // Combine canvas video track and video audio track into export stream before recording starts
-      const combinedStream = new MediaStream();
-      canvasStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
-      if (audioStream) {
-        audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+      combinedStream = new MediaStream();
+      if (canvasStream) {
+        canvasStream.getVideoTracks().forEach(track => combinedStream!.addTrack(track));
       }
+      if (audioStream) {
+        audioStream.getAudioTracks().forEach(track => combinedStream!.addTrack(track));
+      }
+
+      // 3. Use lower video bitrate on mobile (2.5 Mbps) vs desktop (4 Mbps)
+      const videoBitrate = isMobile ? 2500000 : 4000000;
 
       const recorder = new MediaRecorder(combinedStream, {
         mimeType,
-        audioBitsPerSecond: 128000, // 128 kbps AAC audio
-        videoBitsPerSecond: 4000000 // 4 Mbps H.264 video
+        audioBitsPerSecond: 128000,
+        videoBitsPerSecond: videoBitrate
       });
       const chunks: Blob[] = [];
 
@@ -1093,6 +1113,21 @@ export default function App() {
     } finally {
       setIsExporting(false);
       setExportProgress(0);
+      // 4. Release recorder, stream tracks, and clear chunks array to free memory
+      try {
+        if (combinedStream) {
+          combinedStream.getTracks().forEach(track => track.stop());
+        }
+        if (canvasStream) {
+          canvasStream.getTracks().forEach(track => track.stop());
+        }
+        if (audioStream) {
+          audioStream.getTracks().forEach(track => track.stop());
+        }
+      } catch (e) {
+        console.warn("Stream cleanup warning:", e);
+      }
+      chunks.length = 0;
     }
   };
 

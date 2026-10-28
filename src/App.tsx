@@ -872,8 +872,12 @@ export default function App() {
       const origMuted = video.muted;
       video.pause();
 
-      const width = video.videoWidth || 1280;
-      const height = video.videoHeight || 720;
+      let rawWidth = video.videoWidth || 1280;
+      let rawHeight = video.videoHeight || 720;
+      // Ensure width and height are even numbers for H.264/yuv420p compatibility
+      const width = rawWidth % 2 !== 0 ? rawWidth - 1 : rawWidth;
+      const height = rawHeight % 2 !== 0 ? rawHeight - 1 : rawHeight;
+
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
@@ -901,7 +905,7 @@ export default function App() {
 
       if (!mimeType) {
         setIsExporting(false);
-        setStatusMessage('Error: This browser cannot export MP4 videos. Please use Chrome, Edge, or Safari.');
+        setStatusMessage('Error: This browser cannot export a compatible MP4 video. Please use Chrome, Edge, or Safari.');
         setStatusType('error');
         return;
       }
@@ -911,7 +915,7 @@ export default function App() {
       // 1. Capture video stream from canvas at 30 fps
       const canvasStream = canvas.captureStream(30);
 
-      // 2. Capture audio stream from video element
+      // 2. Capture audio stream from video element (Stereo 44100Hz)
       let audioStream: MediaStream | null = null;
       try {
         if ((video as any).captureStream) {
@@ -927,7 +931,7 @@ export default function App() {
         }
 
         if (!audioStream) {
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 });
           const sourceNode = audioCtx.createMediaElementSource(video);
           const destNode = audioCtx.createMediaStreamDestination();
           sourceNode.connect(destNode);
@@ -947,8 +951,8 @@ export default function App() {
 
       const recorder = new MediaRecorder(combinedStream, {
         mimeType,
-        audioBitsPerSecond: 128000,
-        videoBitsPerSecond: 4000000
+        audioBitsPerSecond: 128000, // 128 kbps AAC audio
+        videoBitsPerSecond: 4000000 // 4 Mbps H.264 video
       });
       const chunks: Blob[] = [];
 

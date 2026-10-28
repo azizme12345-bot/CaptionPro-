@@ -852,7 +852,7 @@ export default function App() {
     }
   };
 
-  // Video Export (Burned-in subtitles with absolute transparency & no background strip via real-time playback + Canvas captureStream + Audio)
+  // Video Export (Server-Side FFmpeg Render Pipeline with full duration & preserved audio + Client Fallback)
   const handleExportBurnedVideo = async () => {
     const video = videoRef.current;
     if (!video) {
@@ -862,10 +862,64 @@ export default function App() {
     }
 
     setIsExporting(true);
-    setExportProgress(0);
-    setStatusMessage('Rendering video with real-time audio and captions...');
+    setExportProgress(10);
+    setStatusMessage('Initiating high-fidelity server render pipeline with preserved audio...');
     setStatusType('info');
 
+    // Attempt 1: Server-Side FFmpeg Render (Scales for high concurrency, full video duration, zero audio loss)
+    try {
+      let fileToUpload: File | Blob | null = videoFile;
+      if (!fileToUpload && videoSrc) {
+        try {
+          const resp = await fetch(videoSrc);
+          if (resp.ok) {
+            fileToUpload = await resp.blob();
+          }
+        } catch (fetchErr) {
+          console.warn("Could not fetch remote videoSrc for server render:", fetchErr);
+        }
+      }
+
+      if (fileToUpload) {
+        setExportProgress(30);
+        setStatusMessage('Encoding full video duration (preserving audio & burning subtitles)...');
+        
+        const formData = new FormData();
+        formData.append('video', fileToUpload, videoFileName || 'video.mp4');
+        formData.append('captions', JSON.stringify(captions));
+
+        const serverResp = await fetch('/api/export-video', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (serverResp.ok) {
+          setExportProgress(90);
+          setStatusMessage('Server encoding complete! Downloading final MP4 video...');
+          const exportedBlob = await serverResp.blob();
+
+          if (exportedBlob && exportedBlob.size > 1000) {
+            const downloadUrl = URL.createObjectURL(exportedBlob);
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = 'captionpro-export.mp4';
+            a.click();
+            URL.revokeObjectURL(downloadUrl);
+
+            setExportProgress(100);
+            setStatusMessage(`Exported captioned-video.mp4 (${Math.round(duration || 20)}s full duration) with audio.`);
+            setStatusType('success');
+            setIsExporting(false);
+            return;
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn("Server render pipeline fallback to client engine:", serverErr);
+    }
+
+    // Attempt 2: Client-Side Fallback Engine
+    setStatusMessage('Rendering video locally with audio and subtitles...');
     let canvasStream: MediaStream | null = null;
     let audioStream: MediaStream | null = null;
     let combinedStream: MediaStream | null = null;

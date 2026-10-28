@@ -552,7 +552,17 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
     }
   });
 
-  // API Endpoint for video export (burning subtitles into MP4)
+  // Format high-precision SRT timestamps (HH:MM:SS,mmm)
+  function formatSrtTimestamp(seconds: number): string {
+    const safeSec = Math.max(0, isNaN(seconds) ? 0 : seconds);
+    const h = Math.floor(safeSec / 3600);
+    const m = Math.floor((safeSec % 3600) / 60);
+    const s = Math.floor(safeSec % 60);
+    const ms = Math.floor((safeSec % 1) * 1000);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+  }
+
+  // API Endpoint for video export (burning subtitles into MP4 with full duration and preserved audio)
   app.post('/api/export-video', handleUpload, async (req, res) => {
     let inputPath = req.file?.path;
     let srtPath = '';
@@ -571,37 +581,59 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
       
       let srtContent = '';
       captions.forEach((c: any, index: number) => {
-        srtContent += `${index + 1}\n00:${c.start},000 --> 00:${c.end},000\n${c.text}\n\n`;
+        let startSec = typeof c.startSec === 'number' ? c.startSec : (parseFloat(c.start) || 0);
+        let endSec = typeof c.endSec === 'number' ? c.endSec : (parseFloat(c.end) || (startSec + 2.5));
+        
+        if (typeof c.start === 'string' && c.start.includes(':')) {
+          const parts = c.start.split(':');
+          startSec = (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+        }
+        if (typeof c.end === 'string' && c.end.includes(':')) {
+          const parts = c.end.split(':');
+          endSec = (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+        }
+
+        srtContent += `${index + 1}\n${formatSrtTimestamp(startSec)} --> ${formatSrtTimestamp(endSec)}\n${(c.text || '').trim()}\n\n`;
       });
 
       const uploadDir = path.join(__dirname, 'uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
       srtPath = path.join(uploadDir, `sub-${Date.now()}.srt`);
       outputPath = path.join(uploadDir, `exported-${Date.now()}.mp4`);
       fs.writeFileSync(srtPath, srtContent, 'utf-8');
+
+      console.log(`[Export] Rendering full-duration video with ${captions.length} captions. Input: ${inputPath}`);
 
       await new Promise((resolve, reject) => {
         const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
         
         ffmpeg(inputPath)
           .outputOptions([
-            `-vf subtitles='${escapedSrtPath}'`,
+            `-vf subtitles='${escapedSrtPath}:force_style=FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2'`,
             '-c:v libx264',
             '-pix_fmt yuv420p',
-            '-map 0:v',
-            '-map 0:a',
+            '-movflags +faststart',
+            '-map 0:v:0',
+            '-map 0:a?',
             '-c:a aac',
             '-b:a 128k'
           ])
           .save(outputPath)
-          .on('end', () => resolve(true))
+          .on('end', () => {
+            console.log("[Export] FFmpeg rendering completed successfully.");
+            resolve(true);
+          })
           .on('error', (err: any) => {
             console.warn("Primary FFmpeg export error:", err.message);
-            // Fallback: retry with flexible audio mapping if strict 0:a fails on videos without audio streams
+            // Fallback: retry with flexible subtitle formatting or stream copy if fontconfig is restricted
             ffmpeg(inputPath)
               .outputOptions([
                 `-vf subtitles='${escapedSrtPath}'`,
                 '-c:v libx264',
                 '-pix_fmt yuv420p',
+                '-movflags +faststart',
                 '-map 0:v:0',
                 '-map 0:a?',
                 '-c:a aac',
@@ -612,6 +644,9 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
               .on('error', (fallbackErr: any) => reject(fallbackErr));
           });
       });
+
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Disposition', 'attachment; filename="captionpro-export.mp4"');
 
       res.download(outputPath, 'captionpro-export.mp4', () => {
         try { if (inputPath && fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
@@ -626,10 +661,47 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
       try { if (outputPath && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(e){}
 
       res.status(500).json({
-        error: 'Video rendering limitation: Server-side video re-encoding encountered an FFmpeg binary restriction.',
+        error: 'Video rendering error: ' + (error.message || 'Server-side encoding error'),
         alternative: 'We have generated your precise .SRT subtitle file successfully as a working alternative.'
       });
     }
+  });
+
+  // Dynamic SEO routes: robots.txt and sitemap.xml
+  app.get('/robots.txt', (req, res) => {
+    const robotsPath = path.join(__dirname, 'public', 'robots.txt');
+    if (fs.existsSync(robotsPath)) {
+      res.setHeader('Content-Type', 'text/plain');
+      return res.sendFile(robotsPath);
+    }
+    res.setHeader('Content-Type', 'text/plain');
+    res.send("User-agent: *\nAllow: /\nSitemap: https://captionpro.app/sitemap.xml\n");
+  });
+
+  app.get('/sitemap.xml', (req, res) => {
+    const sitemapPath = path.join(__dirname, 'public', 'sitemap.xml');
+    if (fs.existsSync(sitemapPath)) {
+      res.setHeader('Content-Type', 'application/xml');
+      return res.sendFile(sitemapPath);
+    }
+    const today = new Date().toISOString().split('T')[0];
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://captionpro.app/</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://captionpro.app/#editor</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+</urlset>`;
+    res.setHeader('Content-Type', 'application/xml');
+    res.send(xml);
   });
 
   // Catch-all API error handler to guarantee all API errors return JSON (never HTML)

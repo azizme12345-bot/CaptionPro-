@@ -900,6 +900,45 @@ export default function App() {
       }
 
       const stream = canvas.captureStream(30);
+
+      // Capture audio from video element if available
+      try {
+        let audioStream: MediaStream | null = null;
+        if ((video as any).captureStream) {
+          const vidCaptured = (video as any).captureStream();
+          if (vidCaptured.getAudioTracks().length > 0) {
+            audioStream = vidCaptured;
+          }
+        } else if ((video as any).mozCaptureStream) {
+          const vidCaptured = (video as any).mozCaptureStream();
+          if (vidCaptured.getAudioTracks().length > 0) {
+            audioStream = vidCaptured;
+          }
+        }
+
+        if (!audioStream && typeof (video as any).crossOrigin !== 'undefined') {
+          try {
+            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const sourceNode = audioCtx.createMediaElementSource(video);
+            const destNode = audioCtx.createMediaStreamDestination();
+            sourceNode.connect(destNode);
+            sourceNode.connect(audioCtx.destination);
+            audioStream = destNode.stream;
+          } catch (e) {
+            console.warn("Web Audio API capture fallback warning:", e);
+          }
+        }
+
+        if (audioStream && audioStream.getAudioTracks().length > 0) {
+          audioStream.getAudioTracks().forEach(track => {
+            stream.addTrack(track);
+          });
+          console.log("Original video audio track successfully attached to export stream.");
+        }
+      } catch (audioErr) {
+        console.warn("Could not attach audio stream, exporting video track only:", audioErr);
+      }
+
       const recorder = new MediaRecorder(stream, { mimeType });
       const chunks: Blob[] = [];
 
@@ -914,6 +953,11 @@ export default function App() {
         };
         recorder.onerror = (e) => reject(e);
       });
+
+      // Ensure video is unmuted and playing silently during export so audio track captures correctly
+      video.muted = false;
+      video.currentTime = 0;
+      await video.play().catch(() => {});
 
       recorder.start(100);
 

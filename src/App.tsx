@@ -899,12 +899,19 @@ export default function App() {
           const exportedBlob = await serverResp.blob();
 
           if (exportedBlob && exportedBlob.size > 1000) {
-            const downloadUrl = URL.createObjectURL(exportedBlob);
+            const mp4Blob = new Blob([exportedBlob], { type: 'video/mp4' });
+            const downloadUrl = URL.createObjectURL(mp4Blob);
             const a = document.createElement('a');
             a.href = downloadUrl;
             a.download = 'captionpro-export.mp4';
+            document.body.appendChild(a);
             a.click();
-            URL.revokeObjectURL(downloadUrl);
+            setTimeout(() => {
+              try {
+                document.body.removeChild(a);
+                URL.revokeObjectURL(downloadUrl);
+              } catch (e) {}
+            }, 5000);
 
             setExportProgress(100);
             setStatusMessage(`Exported captioned-video.mp4 (${Math.round(duration || 20)}s full duration) with audio.`);
@@ -912,6 +919,9 @@ export default function App() {
             setIsExporting(false);
             return;
           }
+        } else {
+          const errText = await serverResp.text();
+          console.warn("Server render failed with status:", serverResp.status, errText);
         }
       }
     } catch (serverErr) {
@@ -961,7 +971,9 @@ export default function App() {
       const mp4Candidates = [
         'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
         'video/mp4;codecs=avc1,mp4a.40.2',
-        'video/mp4'
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm'
       ];
 
       if (typeof MediaRecorder !== 'undefined') {
@@ -975,12 +987,12 @@ export default function App() {
 
       if (!mimeType) {
         setIsExporting(false);
-        setStatusMessage('Error: This browser cannot export a compatible MP4 video. Please use Chrome, Edge, or Safari.');
+        setStatusMessage('Error: This browser cannot export a compatible video. Please use Chrome, Edge, or Safari.');
         setStatusType('error');
         return;
       }
 
-      const fileExt = 'mp4';
+      const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
 
       // Capture video stream from canvas at 30 fps
       canvasStream = canvas.captureStream(30);
@@ -1028,7 +1040,6 @@ export default function App() {
         audioBitsPerSecond: 128000,
         videoBitsPerSecond: videoBitrate
       });
-      const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
@@ -1045,23 +1056,35 @@ export default function App() {
       video.muted = false;
       video.currentTime = 0;
       
-      // Start recording with 1000ms timeslice to collect chunks reliably without truncation
-      recorder.start(1000);
-      await video.play();
+      // Start recording with 500ms timeslice to collect chunks reliably without truncation
+      recorder.start(500);
+      await video.play().catch(() => {});
 
       const totalDuration = video.duration || duration || 10;
 
-      // Real-time animation frame loop ensuring full video playback until ended
+      // Real-time animation frame loop ensuring full video playback until complete duration
       await new Promise<void>((resolve) => {
+        let isResolved = false;
+
         const drawFrame = () => {
-          if (video.ended || video.paused || video.currentTime >= totalDuration) {
+          if (isResolved) return;
+
+          const currentTime = video.currentTime;
+          const isFinished = video.ended || currentTime >= (totalDuration - 0.1);
+
+          if (isFinished) {
+            isResolved = true;
             // Draw final frame to make sure last frame is rendered
             ctx.drawImage(video, 0, 0, width, height);
             resolve();
             return;
           }
 
-          const currentTime = video.currentTime;
+          // If playback was temporarily stalled, ensure it resumes until full duration is reached
+          if (video.paused && !video.ended) {
+            video.play().catch(() => {});
+          }
+
           const pct = Math.min(99, Math.round((currentTime / totalDuration) * 100));
           setExportProgress(pct);
 
@@ -1148,10 +1171,14 @@ export default function App() {
         requestAnimationFrame(drawFrame);
       });
 
-      // Stop video and recorder gracefully after full video length
+      // Flush remaining data from recorder and ensure streams are cleanly closed
+      if (recorder.state === 'recording') {
+        try { recorder.requestData(); } catch (e) {}
+        await new Promise(r => setTimeout(r, 150));
+        recorder.stop();
+      }
+
       video.pause();
-      recorder.stop();
-      
       video.currentTime = origTime;
       video.muted = origMuted;
       if (origPlaying) video.play();
@@ -1202,8 +1229,14 @@ export default function App() {
       const a = document.createElement('a');
       a.href = downloadUrl;
       a.download = `captioned-video.${fileExt}`;
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(downloadUrl);
+      setTimeout(() => {
+        try {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(downloadUrl);
+        } catch (e) {}
+      }, 5000);
 
       setStatusMessage(`Exported captioned-video.${fileExt} successfully with audio.`);
       setStatusType('success');

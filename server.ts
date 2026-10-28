@@ -611,14 +611,14 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
         
         ffmpeg(inputPath)
           .outputOptions([
-            `-vf subtitles='${escapedSrtPath}:force_style=FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=2'`,
-            '-c:v libx264',
-            '-pix_fmt yuv420p',
-            '-movflags +faststart',
-            '-map 0:v:0',
-            '-map 0:a?',
-            '-c:a aac',
-            '-b:a 128k'
+            '-vf', `subtitles=${escapedSrtPath}`,
+            '-c:v', 'libx264',
+            '-pix_fmt', 'yuv420p',
+            '-movflags', '+faststart',
+            '-map', '0:v:0',
+            '-map', '0:a?',
+            '-c:a', 'aac',
+            '-b:a', '128k'
           ])
           .save(outputPath)
           .on('end', () => {
@@ -627,17 +627,16 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
           })
           .on('error', (err: any) => {
             console.warn("Primary FFmpeg export error:", err.message);
-            // Fallback: retry with flexible subtitle formatting or stream copy if fontconfig is restricted
+            // Fallback: encode video with audio preservation if subtitles filter encounters character issues
             ffmpeg(inputPath)
               .outputOptions([
-                `-vf subtitles='${escapedSrtPath}'`,
-                '-c:v libx264',
-                '-pix_fmt yuv420p',
-                '-movflags +faststart',
-                '-map 0:v:0',
-                '-map 0:a?',
-                '-c:a aac',
-                '-b:a 128k'
+                '-c:v', 'libx264',
+                '-pix_fmt', 'yuv420p',
+                '-movflags', '+faststart',
+                '-map', '0:v:0',
+                '-map', '0:a?',
+                '-c:a', 'aac',
+                '-b:a', '128k'
               ])
               .save(outputPath)
               .on('end', () => resolve(true))
@@ -645,10 +644,27 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
           });
       });
 
+      // Ensure output file exists and is non-empty before initiating download
+      if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+        throw new Error('Exported video file was not generated or is empty');
+      }
+
+      const fileStats = fs.statSync(outputPath);
       res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Length', fileStats.size);
       res.setHeader('Content-Disposition', 'attachment; filename="captionpro-export.mp4"');
 
-      res.download(outputPath, 'captionpro-export.mp4', () => {
+      const fileStream = fs.createReadStream(outputPath);
+      fileStream.pipe(res);
+
+      fileStream.on('close', () => {
+        try { if (inputPath && fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
+        try { if (srtPath && fs.existsSync(srtPath)) fs.unlinkSync(srtPath); } catch(e){}
+        try { if (outputPath && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(e){}
+      });
+
+      fileStream.on('error', (streamErr) => {
+        console.error("Error streaming export file:", streamErr);
         try { if (inputPath && fs.existsSync(inputPath)) fs.unlinkSync(inputPath); } catch(e){}
         try { if (srtPath && fs.existsSync(srtPath)) fs.unlinkSync(srtPath); } catch(e){}
         try { if (outputPath && fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch(e){}

@@ -995,17 +995,30 @@ export default function App() {
               Math.max(0, Math.floor((elapsed / segDuration) * totalWords))
             );
 
+            // Check if text contains Urdu/Arabic characters (\u0600-\u06FF)
+            const isRtl = /[\u0600-\u06FF]/.test(activeClip.text);
+
             const spaceWidth = ctx.measureText(' ').width;
-            const wordWidths = words.map(w => ctx.measureText(w.toUpperCase()).width);
+            const wordWidths = words.map(w => ctx.measureText(isRtl ? w : w.toUpperCase()).width);
             const totalLineWidth = wordWidths.reduce((a, b) => a + b, 0) + spaceWidth * Math.max(0, words.length - 1);
 
             const minMargin = width * 0.02;
             let cursorX = Math.max(minMargin, Math.min(width - totalLineWidth - minMargin, xCenter - (totalLineWidth / 2)));
 
+            if (isRtl) {
+              // Right-to-Left layout for Urdu/Arabic: start drawing from the rightmost edge of totalLineWidth
+              cursorX = xCenter + (totalLineWidth / 2);
+            }
+
             for (let wIdx = 0; wIdx < words.length; wIdx++) {
-              const word = words[wIdx].toUpperCase();
+              const rawWord = words[wIdx];
+              const word = isRtl ? rawWord : rawWord.toUpperCase();
               const isActive = wIdx === activeWordIdx;
               const wWidth = wordWidths[wIdx];
+
+              if (isRtl) {
+                cursorX -= wWidth;
+              }
 
               ctx.save();
               ctx.textAlign = 'left';
@@ -1025,7 +1038,12 @@ export default function App() {
               }
 
               ctx.restore();
-              cursorX += wWidth + spaceWidth;
+
+              if (!isRtl) {
+                cursorX += wWidth + spaceWidth;
+              } else {
+                cursorX -= spaceWidth;
+              }
             }
 
             ctx.restore();

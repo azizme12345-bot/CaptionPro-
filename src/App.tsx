@@ -852,7 +852,7 @@ export default function App() {
     }
   };
 
-  // Video Export (Burned-in subtitles with absolute transparency & no background strip via Canvas + MediaRecorder)
+  // Video Export (Burned-in subtitles with absolute transparency & no background strip via real-time playback + Canvas captureStream + Audio)
   const handleExportBurnedVideo = async () => {
     const video = videoRef.current;
     if (!video) {
@@ -863,11 +863,13 @@ export default function App() {
 
     setIsExporting(true);
     setExportProgress(0);
-    setStatusMessage('Rendering video with custom font and transparent shadow subtitles...');
+    setStatusMessage('Rendering video with real-time audio and captions...');
     setStatusType('info');
 
     try {
       const origPlaying = !video.paused;
+      const origTime = video.currentTime;
+      const origMuted = video.muted;
       video.pause();
 
       const width = video.videoWidth || 1280;
@@ -881,17 +883,17 @@ export default function App() {
         throw new Error('Canvas 2D context not supported');
       }
 
-      let mimeType = 'video/webm;codecs=vp9';
+      let mimeType = 'video/webm;codecs=vp9,opus';
       let fileExt = 'webm';
       if (typeof MediaRecorder !== 'undefined') {
-        if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
-          mimeType = 'video/mp4;codecs=avc1';
+        if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,aac')) {
+          mimeType = 'video/mp4;codecs=avc1,aac';
           fileExt = 'mp4';
         } else if (MediaRecorder.isTypeSupported('video/mp4')) {
           mimeType = 'video/mp4';
           fileExt = 'mp4';
-        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
-          mimeType = 'video/webm;codecs=vp8';
+        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+          mimeType = 'video/webm;codecs=vp8,opus';
           fileExt = 'webm';
         } else if (MediaRecorder.isTypeSupported('video/webm')) {
           mimeType = 'video/webm';
@@ -899,11 +901,12 @@ export default function App() {
         }
       }
 
-      const stream = canvas.captureStream(30);
+      // 1. Capture video stream from canvas at 30 fps
+      const canvasStream = canvas.captureStream(30);
 
-      // Capture audio from video element if available
+      // 2. Capture audio stream from video element
+      let audioStream: MediaStream | null = null;
       try {
-        let audioStream: MediaStream | null = null;
         if ((video as any).captureStream) {
           const vidCaptured = (video as any).captureStream();
           if (vidCaptured.getAudioTracks().length > 0) {
@@ -916,30 +919,26 @@ export default function App() {
           }
         }
 
-        if (!audioStream && typeof (video as any).crossOrigin !== 'undefined') {
-          try {
-            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-            const sourceNode = audioCtx.createMediaElementSource(video);
-            const destNode = audioCtx.createMediaStreamDestination();
-            sourceNode.connect(destNode);
-            sourceNode.connect(audioCtx.destination);
-            audioStream = destNode.stream;
-          } catch (e) {
-            console.warn("Web Audio API capture fallback warning:", e);
-          }
-        }
-
-        if (audioStream && audioStream.getAudioTracks().length > 0) {
-          audioStream.getAudioTracks().forEach(track => {
-            stream.addTrack(track);
-          });
-          console.log("Original video audio track successfully attached to export stream.");
+        if (!audioStream) {
+          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const sourceNode = audioCtx.createMediaElementSource(video);
+          const destNode = audioCtx.createMediaStreamDestination();
+          sourceNode.connect(destNode);
+          sourceNode.connect(audioCtx.destination);
+          audioStream = destNode.stream;
         }
       } catch (audioErr) {
-        console.warn("Could not attach audio stream, exporting video track only:", audioErr);
+        console.warn("Audio capture fallback warning:", audioErr);
       }
 
-      const recorder = new MediaRecorder(stream, { mimeType });
+      // Combine canvas video track and video audio track into export stream
+      const combinedStream = new MediaStream();
+      canvasStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+      if (audioStream) {
+        audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+      }
+
+      const recorder = new MediaRecorder(combinedStream, { mimeType });
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {
@@ -954,99 +953,96 @@ export default function App() {
         recorder.onerror = (e) => reject(e);
       });
 
-      // Ensure video is unmuted and playing silently during export so audio track captures correctly
       video.muted = false;
       video.currentTime = 0;
-      await video.play().catch(() => {});
-
       recorder.start(100);
+      await video.play();
 
       const totalDuration = video.duration || duration || 10;
-      const fps = 30;
-      let renderTime = 0;
 
-      while (renderTime < totalDuration) {
-        video.currentTime = renderTime;
-        await new Promise(r => {
-          const onSeeked = () => {
-            video.removeEventListener('seeked', onSeeked);
-            r(true);
-          };
-          video.addEventListener('seeked', onSeeked);
-        });
+      // Real-time animation frame loop
+      await new Promise<void>((resolve) => {
+        const drawFrame = () => {
+          if (video.ended || video.paused || video.currentTime >= totalDuration) {
+            resolve();
+            return;
+          }
 
-        // 1. Draw video frame
-        ctx.drawImage(video, 0, 0, width, height);
+          const currentTime = video.currentTime;
+          const pct = Math.min(99, Math.round((currentTime / totalDuration) * 100));
+          setExportProgress(pct);
 
-        // 2. Render single-line caption overlay with absolute transparency (NO BLACK STRIP)
-        const activeClip = captions.find(c => renderTime >= c.startSec && renderTime <= c.endSec);
-        if (activeClip && activeClip.text.trim()) {
-          ctx.save();
-          // Dynamic scaling based on captionFontSize (calibrated relative to 720p height)
-          const baseSize = Math.max(16, Math.round(captionFontSize * (height / 720)));
-          ctx.font = `800 ${baseSize}px ${activeFontFamily}`;
-          ctx.textBaseline = 'middle';
+          // Draw video frame
+          ctx.drawImage(video, 0, 0, width, height);
 
-          // Use dynamically dragged 2D position (X & Y)
-          const xCenter = width * (captionXPercent / 100);
-          const yPos = Math.max(baseSize, Math.min(height - baseSize, height * (captionYPercent / 100)));
-
-          const words = activeClip.text.trim().split(/\s+/).filter(Boolean);
-          const totalWords = words.length;
-          const segDuration = Math.max(0.1, activeClip.endSec - activeClip.startSec);
-          const elapsed = Math.max(0, renderTime - activeClip.startSec);
-          const activeWordIdx = Math.min(
-            totalWords - 1,
-            Math.max(0, Math.floor((elapsed / segDuration) * totalWords))
-          );
-
-          // Measure words on a single line
-          const spaceWidth = ctx.measureText(' ').width;
-          const wordWidths = words.map(w => ctx.measureText(w.toUpperCase()).width);
-          const totalLineWidth = wordWidths.reduce((a, b) => a + b, 0) + spaceWidth * Math.max(0, words.length - 1);
-
-          // Center horizontally around xCenter while softly constraining inside canvas margins
-          const minMargin = width * 0.02;
-          let cursorX = Math.max(minMargin, Math.min(width - totalLineWidth - minMargin, xCenter - (totalLineWidth / 2)));
-
-          for (let wIdx = 0; wIdx < words.length; wIdx++) {
-            const word = words[wIdx].toUpperCase();
-            const isActive = wIdx === activeWordIdx;
-            const wWidth = wordWidths[wIdx];
-
+          // Draw active caption overlay matching exact styling
+          const activeClip = captions.find(c => currentTime >= c.startSec && currentTime <= c.endSec);
+          if (activeClip && activeClip.text.trim()) {
             ctx.save();
-            ctx.textAlign = 'left';
+            const baseSize = Math.max(16, Math.round(captionFontSize * (height / 720)));
+            ctx.font = `800 ${baseSize}px ${activeFontFamily}`;
+            ctx.textBaseline = 'middle';
 
-            // Clean 4-corner text shadow/stroke simulation for perfect readability on dark/light
-            ctx.lineWidth = Math.max(4, baseSize * 0.16);
-            ctx.lineJoin = 'miter';
-            ctx.miterLimit = 2;
-            ctx.strokeStyle = '#000000';
-            ctx.strokeText(word, cursorX, yPos);
+            const xCenter = width * (captionXPercent / 100);
+            const yPos = Math.max(baseSize, Math.min(height - baseSize, height * (captionYPercent / 100)));
 
-            if (isActive) {
-              // Active word in vibrant Yellow
-              ctx.fillStyle = '#fde047';
-              ctx.fillText(word, cursorX, yPos);
-            } else {
-              // Upcoming/inactive words in pure White
-              ctx.fillStyle = '#ffffff';
-              ctx.fillText(word, cursorX, yPos);
+            const words = activeClip.text.trim().split(/\s+/).filter(Boolean);
+            const totalWords = words.length;
+            const segDuration = Math.max(0.1, activeClip.endSec - activeClip.startSec);
+            const elapsed = Math.max(0, currentTime - activeClip.startSec);
+            const activeWordIdx = Math.min(
+              totalWords - 1,
+              Math.max(0, Math.floor((elapsed / segDuration) * totalWords))
+            );
+
+            const spaceWidth = ctx.measureText(' ').width;
+            const wordWidths = words.map(w => ctx.measureText(w.toUpperCase()).width);
+            const totalLineWidth = wordWidths.reduce((a, b) => a + b, 0) + spaceWidth * Math.max(0, words.length - 1);
+
+            const minMargin = width * 0.02;
+            let cursorX = Math.max(minMargin, Math.min(width - totalLineWidth - minMargin, xCenter - (totalLineWidth / 2)));
+
+            for (let wIdx = 0; wIdx < words.length; wIdx++) {
+              const word = words[wIdx].toUpperCase();
+              const isActive = wIdx === activeWordIdx;
+              const wWidth = wordWidths[wIdx];
+
+              ctx.save();
+              ctx.textAlign = 'left';
+
+              ctx.lineWidth = Math.max(4, baseSize * 0.16);
+              ctx.lineJoin = 'miter';
+              ctx.miterLimit = 2;
+              ctx.strokeStyle = '#000000';
+              ctx.strokeText(word, cursorX, yPos);
+
+              if (isActive) {
+                ctx.fillStyle = '#fde047';
+                ctx.fillText(word, cursorX, yPos);
+              } else {
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(word, cursorX, yPos);
+              }
+
+              ctx.restore();
+              cursorX += wWidth + spaceWidth;
             }
 
             ctx.restore();
-            cursorX += wWidth + spaceWidth;
           }
 
-          ctx.restore();
-        }
+          requestAnimationFrame(drawFrame);
+        };
 
-        renderTime += 1 / fps;
-        const pct = Math.min(99, Math.round((renderTime / totalDuration) * 100));
-        setExportProgress(pct);
-      }
+        requestAnimationFrame(drawFrame);
+      });
 
       recorder.stop();
+      video.pause();
+      video.currentTime = origTime;
+      video.muted = origMuted;
+      if (origPlaying) video.play();
+
       const outputBlob = await renderPromise;
       const downloadUrl = URL.createObjectURL(outputBlob);
       const a = document.createElement('a');
@@ -1055,11 +1051,7 @@ export default function App() {
       a.click();
       URL.revokeObjectURL(downloadUrl);
 
-      video.currentTime = 0;
-      setCurrentTime(0);
-      if (origPlaying) video.play();
-
-      setStatusMessage(`Exported captioned-video.${fileExt} successfully.`);
+      setStatusMessage(`Exported captioned-video.${fileExt} successfully with audio.`);
       setStatusType('success');
     } catch (err: any) {
       console.error("Export error:", err);

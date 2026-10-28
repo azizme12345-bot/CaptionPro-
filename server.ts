@@ -582,16 +582,16 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
             `-vf subtitles='${escapedSrtPath}'`,
             '-c:v libx264',
             '-pix_fmt yuv420p',
-            '-map 0:v:0',
-            '-map 0:a?',
+            '-map 0:v',
+            '-map 0:a',
             '-c:a aac',
-            '-b:a 192k'
+            '-b:a 128k'
           ])
           .save(outputPath)
           .on('end', () => resolve(true))
           .on('error', (err: any) => {
-            console.warn("AAC audio encoding failed, retrying with audio stream copy:", err.message);
-            // Fallback: retry with direct audio stream copy if AAC encoder is unavailable
+            console.warn("Primary FFmpeg export error:", err.message);
+            // Fallback: retry with flexible audio mapping if strict 0:a fails on videos without audio streams
             ffmpeg(inputPath)
               .outputOptions([
                 `-vf subtitles='${escapedSrtPath}'`,
@@ -599,7 +599,8 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
                 '-pix_fmt yuv420p',
                 '-map 0:v:0',
                 '-map 0:a?',
-                '-c:a copy'
+                '-c:a aac',
+                '-b:a 128k'
               ])
               .save(outputPath)
               .on('end', () => resolve(true))

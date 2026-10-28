@@ -990,15 +990,19 @@ export default function App() {
 
       video.muted = false;
       video.currentTime = 0;
-      recorder.start(100);
+      
+      // Start recording with 1000ms timeslice to collect chunks reliably without truncation
+      recorder.start(1000);
       await video.play();
 
       const totalDuration = video.duration || duration || 10;
 
-      // Real-time animation frame loop
+      // Real-time animation frame loop ensuring full video playback until ended
       await new Promise<void>((resolve) => {
         const drawFrame = () => {
           if (video.ended || video.paused || video.currentTime >= totalDuration) {
+            // Draw final frame to make sure last frame is rendered
+            ctx.drawImage(video, 0, 0, width, height);
             resolve();
             return;
           }
@@ -1090,8 +1094,10 @@ export default function App() {
         requestAnimationFrame(drawFrame);
       });
 
-      recorder.stop();
+      // Stop video and recorder gracefully after full video length
       video.pause();
+      recorder.stop();
+      
       video.currentTime = origTime;
       video.muted = origMuted;
       if (origPlaying) video.play();

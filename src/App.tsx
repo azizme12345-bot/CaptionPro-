@@ -1103,7 +1103,48 @@ export default function App() {
       if (origPlaying) video.play();
 
       const outputBlob = await renderPromise;
-      const downloadUrl = URL.createObjectURL(outputBlob);
+      
+      let finalBlob = outputBlob;
+      try {
+        setStatusMessage('Finalizing video...');
+        setStatusType('info');
+
+        // Dynamically load ffmpeg.wasm from CDN using eval to satisfy TypeScript
+        if (!(window as any)._ffmpegInstance) {
+          const { FFmpeg } = await (0, eval)("import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js')");
+          const { toBlobURL, fetchFile } = await (0, eval)("import('https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js')");
+          
+          const ffmpeg = new FFmpeg();
+          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+          await ffmpeg.load({
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+          });
+          (window as any)._ffmpegInstance = { ffmpeg, fetchFile };
+        }
+
+        const { ffmpeg, fetchFile } = (window as any)._ffmpegInstance;
+        const inputName = `input_${Date.now()}.${fileExt}`;
+        const outputName = `output_${Date.now()}.${fileExt}`;
+
+        await ffmpeg.writeFile(inputName, await fetchFile(outputBlob));
+        // Remux with -c copy and -movflags +faststart (no re-encoding)
+        await ffmpeg.exec(['-i', inputName, '-c', 'copy', '-movflags', '+faststart', outputName]);
+        
+        const data = await ffmpeg.readFile(outputName);
+        finalBlob = new Blob([data], { type: mimeType });
+
+        try {
+          await ffmpeg.deleteFile(inputName);
+          await ffmpeg.deleteFile(outputName);
+        } catch (e) {
+          // ignore cleanup errors
+        }
+      } catch (remuxErr) {
+        console.warn("FFmpeg.wasm remuxing skipped/failed, falling back to original recording blob:", remuxErr);
+      }
+
+      const downloadUrl = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = downloadUrl;
       a.download = `captioned-video.${fileExt}`;

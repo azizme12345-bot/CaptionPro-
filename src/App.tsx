@@ -883,23 +883,30 @@ export default function App() {
         throw new Error('Canvas 2D context not supported');
       }
 
-      let mimeType = 'video/webm;codecs=vp9,opus';
-      let fileExt = 'webm';
+      let mimeType = '';
+      const mp4Candidates = [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4'
+      ];
+
       if (typeof MediaRecorder !== 'undefined') {
-        if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1,aac')) {
-          mimeType = 'video/mp4;codecs=avc1,aac';
-          fileExt = 'mp4';
-        } else if (MediaRecorder.isTypeSupported('video/mp4')) {
-          mimeType = 'video/mp4';
-          fileExt = 'mp4';
-        } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
-          mimeType = 'video/webm;codecs=vp8,opus';
-          fileExt = 'webm';
-        } else if (MediaRecorder.isTypeSupported('video/webm')) {
-          mimeType = 'video/webm';
-          fileExt = 'webm';
+        for (const candidate of mp4Candidates) {
+          if (MediaRecorder.isTypeSupported(candidate)) {
+            mimeType = candidate;
+            break;
+          }
         }
       }
+
+      if (!mimeType) {
+        setIsExporting(false);
+        setStatusMessage('Error: This browser cannot export MP4 videos. Please use Chrome, Edge, or Safari.');
+        setStatusType('error');
+        return;
+      }
+
+      const fileExt = 'mp4';
 
       // 1. Capture video stream from canvas at 30 fps
       const canvasStream = canvas.captureStream(30);
@@ -931,14 +938,18 @@ export default function App() {
         console.warn("Audio capture fallback warning:", audioErr);
       }
 
-      // Combine canvas video track and video audio track into export stream
+      // Combine canvas video track and video audio track into export stream before recording starts
       const combinedStream = new MediaStream();
       canvasStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
       if (audioStream) {
         audioStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
       }
 
-      const recorder = new MediaRecorder(combinedStream, { mimeType });
+      const recorder = new MediaRecorder(combinedStream, {
+        mimeType,
+        audioBitsPerSecond: 128000,
+        videoBitsPerSecond: 4000000
+      });
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (e) => {

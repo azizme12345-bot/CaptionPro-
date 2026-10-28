@@ -149,16 +149,19 @@ function formatRomanUrduPhonetics(text: string): string {
     .join(' ');
 }
 
-// Helper to convert mm:ss to seconds
-function parseTimeToSeconds(timeStr: string): number {
-  if (!timeStr) return 0;
-  const parts = timeStr.trim().split(':');
+// Helper to convert mm:ss or float seconds to numeric seconds
+function parseTimeToSeconds(timeVal: string | number | undefined | null): number {
+  if (timeVal === undefined || timeVal === null) return 0;
+  if (typeof timeVal === 'number') return isNaN(timeVal) ? 0 : timeVal;
+  const str = String(timeVal).trim();
+  if (!str) return 0;
+  const parts = str.split(':');
   if (parts.length === 2) {
     const mins = parseFloat(parts[0]) || 0;
     const secs = parseFloat(parts[1]) || 0;
     return mins * 60 + secs;
   }
-  return parseFloat(timeStr) || 0;
+  return parseFloat(str) || 0;
 }
 
 // Helper to format seconds to mm:ss
@@ -810,15 +813,22 @@ export default function App() {
 
       // 3. Process API captions
       const parsed: CaptionSegment[] = captionsData.map((item: any, idx: number) => {
-        const startSec = parseTimeToSeconds(item.start || '00:00');
-        const endSec = parseTimeToSeconds(item.end || '00:03');
+        const startSec = parseTimeToSeconds(item.start ?? 0);
+        const endSec = parseTimeToSeconds(item.end ?? (startSec + 2.5));
+        const startStr = typeof item.start === 'string' && item.start.includes(':')
+          ? item.start
+          : formatSecondsToTime(startSec);
+        const endStr = typeof item.end === 'string' && item.end.includes(':')
+          ? item.end
+          : formatSecondsToTime(endSec);
+
         return {
           id: `seg-${Date.now()}-${idx}`,
-          start: item.start || '00:00',
-          end: item.end || '00:03',
+          start: startStr,
+          end: endStr,
           startSec,
-          endSec,
-          text: item.text || 'Caption'
+          endSec: Math.max(startSec + 0.5, endSec),
+          text: (item.text || '').trim() || 'Caption'
         };
       });
 
@@ -1308,12 +1318,13 @@ export default function App() {
                         </span>
                       </div>
 
-                      {/* Single-line text overlay with ABSOLUTE TRANSPARENCY (No background box/strip) */}
+                      {/* Single-line text overlay with ABSOLUTE TRANSPARENCY (No background box/strip, overflow-visible for Nastaliq ligatures) */}
                       <div
-                        className="inline-flex items-center justify-center whitespace-nowrap overflow-hidden text-ellipsis px-2 py-1 bg-transparent border-none shadow-none gap-2"
+                        className="inline-flex items-center justify-center whitespace-nowrap overflow-visible px-6 py-2 bg-transparent border-none shadow-none gap-2"
                         style={{
                           fontFamily: activeFontFamily,
-                          fontSize: `${captionFontSize}px`
+                          fontSize: `${captionFontSize}px`,
+                          lineHeight: isPureUrdu ? '1.8' : '1.2'
                         }}
                         dir={isPureUrdu ? 'rtl' : 'ltr'}
                       >

@@ -106,24 +106,35 @@ async function startServer() {
       const isPureUrdu = language === 'Urdu';
       const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
 
-      let languageRule = `Language: ${language}.`;
+      let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
       if (isPureUrdu) {
-        languageRule = `STRICT PURE URDU CONSTRAINT: You MUST output ONLY authentic Arabic-script Urdu characters (e.g., "اپنی ویڈیو کو بہترین بنائیں"). Absolutely NEVER use Latin/English letters, Roman Urdu, or transliterated words.`;
+        languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
+2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
       } else if (isRomanUrdu) {
-        languageRule = `STRICT ROMAN URDU CONSTRAINT: You MUST output ONLY conversational Urdu speech phonetically typed in standard Latin/English alphabet characters (e.g., "Zameen par naya aagaz karein", "Har lafz ko wazeh rakhein"). Absolutely NEVER output Arabic-script characters.`;
+        languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
+      } else {
+        languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Generate captions in ${language}.`;
       }
 
-      const prompt = `Generate a realistic sequence of timed video subtitles (captions) for a short-form video about "${topic || 'A creator discussing modern video tips'}".
-      ${languageRule}
-      The video duration is about ${durationSeconds} seconds.
-      STRICT SHORT-FORM REELS/TIKTOK CONSTRAINT:
-      - Enforce a strict limit of 4 to 6 words per subtitle block.
-      - Never exceed 6 words per segment so each subtitle fits on a clean single line.
-      - Provide sequential subtitle segments, each with start time (mm:ss), end time (mm:ss), and punchy text content (4-6 words).
-      Return strictly JSON matching this schema:
-      [
-        { "start": "00:00", "end": "00:02", "text": "four to six words" }
-      ]`;
+      const prompt = `You are an expert Audio Transcription and Video Captioning Engine for a video editing app called CaptionPro. 
+
+Your task is to generate realistic timed video captions about "${topic || 'modern creator video tips'}" for a video with duration ${durationSeconds} seconds, formatted dynamically based on the requested language.
+
+### OUTPUT FORMAT REQUIREMENTS
+You must return the response strictly as a valid JSON array of objects. Do not include markdown code blocks (like \`\`\`json), introduction, or conversational filler. Each object in the array represents a single text block/line containing these exact keys:
+- "text": The exact transcribed text snippet/sentence.
+- "start": Start time in seconds (float, e.g., 1.25)
+- "end": End time in seconds (float, e.g., 3.40)
+
+### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
+${languageRule}
+3. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
+
+### EXAMPLE OF EXPECTED JSON OUTPUT:
+[
+  {"text": "آج ہم بات کریں گے", "start": 0.00, "end": 1.50},
+  {"text": "AI Technology کے بارے میں", "start": 1.55, "end": 4.10}
+]`;
 
       let captions = [];
       try {
@@ -137,9 +148,9 @@ async function startServer() {
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  start: { type: Type.STRING, description: "Start timestamp mm:ss" },
-                  end: { type: Type.STRING, description: "End timestamp mm:ss" },
-                  text: { type: Type.STRING, description: "Subtitle text" }
+                  start: { type: Type.NUMBER, description: "Start time in seconds (float, e.g., 1.25)" },
+                  end: { type: Type.NUMBER, description: "End time in seconds (float, e.g., 3.40)" },
+                  text: { type: Type.STRING, description: "Exact transcribed text snippet/sentence" }
                 },
                 required: ["start", "end", "text"]
               }
@@ -228,24 +239,37 @@ async function startServer() {
         const isPureUrdu = language === 'Urdu';
         const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
 
-        let languageRule = `Language: ${language}.`;
+        let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
         if (isPureUrdu) {
-          languageRule = `STRICT PURE URDU CONSTRAINT: Transcribe speech ONLY in authentic Arabic-script Urdu characters (e.g., "اپنی ویڈیو کو بہترین بنائیں"). Absolutely NEVER use Latin/English letters or Roman Urdu.`;
+          languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
+2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
         } else if (isRomanUrdu) {
-          languageRule = `STRICT ROMAN URDU CONSTRAINT: Transcribe speech ONLY phonetically using standard Latin/English alphabet characters (e.g., "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
+          languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
+        } else {
+          languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Transcribe the spoken audio directly into ${language}.`;
         }
 
-        const prompt = `Listen carefully to the spoken voice in this audio file. Transcribe the exact spoken words into sequential timed subtitle segments.
+        const prompt = `You are an expert Audio Transcription and Video Captioning Engine for a video editing app called CaptionPro. 
+
+Your task is to listen to the uploaded video's audio, transcribe it with precise word-level timestamps, and format the output dynamically based on the requested language.
+
+### OUTPUT FORMAT REQUIREMENTS
+You must return the response strictly as a valid JSON array of objects. Do not include markdown code blocks (like \`\`\`json), introduction, or conversational filler. Each object in the array represents a single text block/line containing these exact keys:
+- "text": The exact transcribed text snippet/sentence.
+- "start": Start time in seconds (float, e.g., 1.25)
+- "end": End time in seconds (float, e.g., 3.40)
+
+### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
 ${languageRule}
-STRICT SHORT-FORM REELS/TIKTOK CONSTRAINT:
-- Enforce a strict limit of 4 to 6 words per subtitle block.
-- Never exceed 6 words per segment so each subtitle fits on a clean single line.
-- Break sentences into rapid, time-synchronized 4-6 word chunks with precise start and end times (format mm:ss).
-Do NOT summarize or describe the video. You MUST transcribe the actual words spoken by the speaker.
-Return strictly JSON matching this schema:
+3. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
+
+### EXAMPLE OF EXPECTED JSON OUTPUT:
 [
-  { "start": "00:00", "end": "00:02", "text": "exact four to six words" }
-]`;
+  {"text": "آج ہم بات کریں گے", "start": 0.00, "end": 1.50},
+  {"text": "AI Technology کے بارے میں", "start": 1.55, "end": 4.10}
+]
+
+Input Audio/Video File: [Analyze the uploaded media and apply these rules strictly based on the target language requested by the user].`;
 
         // Transcribe audio using gemini-3.1-flash-lite with 10s timeout protection
         let response;
@@ -270,9 +294,9 @@ Return strictly JSON matching this schema:
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    start: { type: Type.STRING, description: 'Start timestamp mm:ss' },
-                    end: { type: Type.STRING, description: 'End timestamp mm:ss' },
-                    text: { type: Type.STRING, description: 'Exact spoken dialogue' }
+                    start: { type: Type.NUMBER, description: 'Start time in seconds (float, e.g., 1.25)' },
+                    end: { type: Type.NUMBER, description: 'End time in seconds (float, e.g., 3.40)' },
+                    text: { type: Type.STRING, description: 'Exact transcribed text snippet/sentence' }
                   },
                   required: ['start', 'end', 'text']
                 }
@@ -304,9 +328,9 @@ Return strictly JSON matching this schema:
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      start: { type: Type.STRING, description: 'Start timestamp mm:ss' },
-                      end: { type: Type.STRING, description: 'End timestamp mm:ss' },
-                      text: { type: Type.STRING, description: 'Exact spoken dialogue' }
+                      start: { type: Type.NUMBER, description: 'Start time in seconds (float, e.g., 1.25)' },
+                      end: { type: Type.NUMBER, description: 'End time in seconds (float, e.g., 3.40)' },
+                      text: { type: Type.STRING, description: 'Exact transcribed text snippet/sentence' }
                     },
                     required: ['start', 'end', 'text']
                   }
@@ -453,14 +477,40 @@ Return strictly JSON matching this schema:
         modelToUse = 'gemini-3.8-flash';
       }
 
-      const prompt = `Transcribe the spoken words from this media into sequential timed subtitle segments. 
-Language: ${language}.
-(Note: If Roman Urdu is selected, write spoken Urdu phonetically in the Latin alphabet).
-Provide segments with start time and end time (format mm:ss) and transcript text.
-Return strictly JSON matching this schema:
+      const isPureUrdu = language === 'Urdu';
+      const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
+
+      let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
+      if (isPureUrdu) {
+        languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
+2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
+      } else if (isRomanUrdu) {
+        languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
+      } else {
+        languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Transcribe the spoken audio directly into ${language}.`;
+      }
+
+      const prompt = `You are an expert Audio Transcription and Video Captioning Engine for a video editing app called CaptionPro. 
+
+Your task is to listen to the uploaded video's audio, transcribe it with precise word-level timestamps, and format the output dynamically based on the requested language.
+
+### OUTPUT FORMAT REQUIREMENTS
+You must return the response strictly as a valid JSON array of objects. Do not include markdown code blocks (like \`\`\`json), introduction, or conversational filler. Each object in the array represents a single text block/line containing these exact keys:
+- "text": The exact transcribed text snippet/sentence.
+- "start": Start time in seconds (float, e.g., 1.25)
+- "end": End time in seconds (float, e.g., 3.40)
+
+### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
+${languageRule}
+3. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
+
+### EXAMPLE OF EXPECTED JSON OUTPUT:
 [
-  { "start": "00:00", "end": "00:03", "text": "..." }
-]`;
+  {"text": "آج ہم بات کریں گے", "start": 0.00, "end": 1.50},
+  {"text": "AI Technology کے بارے میں", "start": 1.55, "end": 4.10}
+]
+
+Input Audio/Video File: [Analyze the uploaded media and apply these rules strictly based on the target language requested by the user].`;
 
       const response = await ai.models.generateContent({
         model: modelToUse,
@@ -472,9 +522,9 @@ Return strictly JSON matching this schema:
             items: {
               type: Type.OBJECT,
               properties: {
-                start: { type: Type.STRING, description: "Start timestamp mm:ss" },
-                end: { type: Type.STRING, description: "End timestamp mm:ss" },
-                text: { type: Type.STRING, description: "Spoken transcript text" }
+                start: { type: Type.NUMBER, description: "Start time in seconds (float, e.g., 1.25)" },
+                end: { type: Type.NUMBER, description: "End time in seconds (float, e.g., 3.40)" },
+                text: { type: Type.STRING, description: "Exact transcribed text snippet/sentence" }
               },
               required: ["start", "end", "text"]
             }

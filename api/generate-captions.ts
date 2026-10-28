@@ -35,23 +35,34 @@ export default async function handler(req: any, res: any) {
     const isPureUrdu = language === 'Urdu';
     const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
 
-    let languageRule = `Language: ${language}.`;
+    let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
     if (isPureUrdu) {
-      languageRule = `STRICT PURE URDU CONSTRAINT: You MUST output ONLY authentic Arabic-script Urdu characters (e.g., "اپنی ویڈیو کو بہترین بنائیں"). Absolutely NEVER use Latin/English letters, Roman Urdu, or transliterated words.`;
+      languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
+2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
     } else if (isRomanUrdu) {
-      languageRule = `STRICT ROMAN URDU CONSTRAINT: You MUST output ONLY conversational Urdu speech phonetically typed in standard Latin/English alphabet characters (e.g., "Zameen par naya aagaz karein", "Har lafz ko wazeh rakhein"). Absolutely NEVER output Arabic-script characters.`;
+      languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
+    } else {
+      languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Generate captions in ${language}.`;
     }
 
-    const prompt = `Generate a realistic sequence of timed video subtitles (captions) for a short-form video about "${topic}".
+    const prompt = `You are an expert Audio Transcription and Video Captioning Engine for a video editing app called CaptionPro. 
+
+Your task is to generate realistic timed video captions about "${topic || 'modern creator video tips'}" for a video with duration ${durationSeconds} seconds, formatted dynamically based on the requested language.
+
+### OUTPUT FORMAT REQUIREMENTS
+You must return the response strictly as a valid JSON array of objects. Do not include markdown code blocks (like \`\`\`json), introduction, or conversational filler. Each object in the array represents a single text block/line containing these exact keys:
+- "text": The exact transcribed text snippet/sentence.
+- "start": Start time in seconds (float, e.g., 1.25)
+- "end": End time in seconds (float, e.g., 3.40)
+
+### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
 ${languageRule}
-The video duration is about ${durationSeconds} seconds.
-STRICT SHORT-FORM REELS/TIKTOK CONSTRAINT:
-- Enforce a strict limit of 4 to 6 words per subtitle block.
-- Never exceed 6 words per segment so each subtitle fits on a clean single line.
-- Provide sequential subtitle segments, each with start time (mm:ss), end time (mm:ss), and punchy text content (4-6 words).
-Return strictly JSON matching this schema:
+3. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
+
+### EXAMPLE OF EXPECTED JSON OUTPUT:
 [
-  { "start": "00:00", "end": "00:02", "text": "four to six words" }
+  {"text": "آج ہم بات کریں گے", "start": 0.00, "end": 1.50},
+  {"text": "AI Technology کے بارے میں", "start": 1.55, "end": 4.10}
 ]`;
 
     let captions = [];
@@ -66,11 +77,11 @@ Return strictly JSON matching this schema:
             items: {
               type: Type.OBJECT,
               properties: {
-                start: { type: Type.STRING, description: 'Start timestamp mm:ss' },
-                end: { type: Type.STRING, description: 'End timestamp mm:ss' },
-                text: { type: Type.STRING, description: 'Subtitle text' }
+                start: { type: Type.NUMBER, description: "Start time in seconds (float, e.g., 1.25)" },
+                end: { type: Type.NUMBER, description: "End time in seconds (float, e.g., 3.40)" },
+                text: { type: Type.STRING, description: "Exact transcribed text snippet/sentence" }
               },
-              required: ['start', 'end', 'text']
+              required: ["start", "end", "text"]
             }
           }
         }

@@ -581,11 +581,30 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
           .outputOptions([
             `-vf subtitles='${escapedSrtPath}'`,
             '-c:v libx264',
-            '-c:a copy'
+            '-pix_fmt yuv420p',
+            '-map 0:v:0',
+            '-map 0:a?',
+            '-c:a aac',
+            '-b:a 192k'
           ])
           .save(outputPath)
           .on('end', () => resolve(true))
-          .on('error', (err: any) => reject(err));
+          .on('error', (err: any) => {
+            console.warn("AAC audio encoding failed, retrying with audio stream copy:", err.message);
+            // Fallback: retry with direct audio stream copy if AAC encoder is unavailable
+            ffmpeg(inputPath)
+              .outputOptions([
+                `-vf subtitles='${escapedSrtPath}'`,
+                '-c:v libx264',
+                '-pix_fmt yuv420p',
+                '-map 0:v:0',
+                '-map 0:a?',
+                '-c:a copy'
+              ])
+              .save(outputPath)
+              .on('end', () => resolve(true))
+              .on('error', (fallbackErr: any) => reject(fallbackErr));
+          });
       });
 
       res.download(outputPath, 'captionpro-export.mp4', () => {

@@ -249,32 +249,23 @@ ${languageRule}
           languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Transcribe the spoken audio directly into ${language}.`;
         }
 
-        const prompt = `You are the core Audio Transcription and Video Captioning Engine for the video editing app 'CaptionPro'. 
+        const prompt = `You are the primary Audio Transcription Engine for CaptionPro. Your only job is to return precise captions.
 
-Your task is to listen to the uploaded video's audio, transcribe it with precise word-level timestamps, and format the output dynamically based on the requested language.
+### RULES
+1. Output Format: Return strictly a valid JSON array of objects. No markdown formatting (like \`\`\`json), no introduction, and no conversational text.
+2. Structure: Use only "text", "start", and "end" keys. Keep segments between 4 to 8 words per block.
+3. Language: Strictly match the user's selected language. If Urdu is chosen, output beautiful, complete Unicode Urdu script (Nastaliq compatible) and avoid Roman Urdu completely.
 
-### 1. MEMORY OPTIMIZATION & CRASH PREVENTION (CRITICAL)
-- Low Memory Overhead: Keep the transcription segments highly optimized. Split sentences frequently. Each JSON text block must NEVER exceed 3 to 5 words. Shorter text streams consume 80% less browser memory during video layout calculations.
-- Clean Timestamps: Provide exact, strictly monotonic timestamps (start and end times must never overlap). Overlapping timestamps cause render loops that crash the browser engine during export.
-
-### 2. URDU SCRIPT INTEGRITY & ANTI-CLIPPING RULES
-- Complete Glyphs: Write fully-formed Urdu words in standard Unicode characters suitable for Jameel Noori Nastalieq. Never output truncated words, half-finished ligatures, or floating dots.
-- Safe Padding Layout: Add an explicit white space before and after every string snippet to create a natural micro-padding, preventing browser text boxes from clipping the final characters (like 'س' or 'ے').
-- Code-Switching: Keep English words in English script if spoken mixed with Urdu, but ensure the structural flow remains cleanly separated to avoid rendering direction bugs.
-
-### 3. OUTPUT FORMAT REQUIREMENTS
-Return the response strictly as a raw valid JSON array of objects. Do not wrap it in markdown formatting (like \`\`\`json), and omit all conversational filler.
-
-### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
+### TARGET LANGUAGE RULE
 ${languageRule}
+4. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
 
 ### EXAMPLE OF EXPECTED JSON OUTPUT:
 [
-  {"text": " آج ہم بات کریں گے ", "start": 0.00, "end": 1.40},
-  {"text": " AI Technology کے بارے میں ", "start": 1.45, "end": 3.20}
+  {"text": "اپنی ویڈیو کو بہترین بنائیں۔", "start": 0.00, "end": 2.50}
 ]
 
-Input Media File: [Analyze the audio track, apply the rules above instantly based on the requested language, and output the optimized lightweight JSON payload].`;
+Input Media File: [Process the audio track normally and output the standard JSON payload based on the user's settings].`;
 
         // Transcribe audio using gemini-3.1-flash-lite with 10s timeout protection
         let response;

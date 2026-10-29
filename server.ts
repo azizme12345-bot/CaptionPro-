@@ -486,27 +486,23 @@ Input Media File: [Process the audio track normally and output the standard JSON
         languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Transcribe the spoken audio directly into ${language}.`;
       }
 
-      const prompt = `You are an expert Audio Transcription and Video Captioning Engine for a video editing app called CaptionPro. 
+      const prompt = `You are the primary Audio Transcription Engine for CaptionPro. Your only job is to return precise captions.
 
-Your task is to listen to the uploaded video's audio, transcribe it with precise word-level timestamps, and format the output dynamically based on the requested language.
+### RULES
+1. Output Format: Return strictly a valid JSON array of objects. No markdown formatting (like \`\`\`json), no introduction, and no conversational text.
+2. Structure: Use only "text", "start", and "end" keys. Keep segments between 4 to 8 words per block.
+3. Language: Strictly match the user's selected language. If Urdu is chosen, output beautiful, complete Unicode Urdu script (Nastaliq compatible) and avoid Roman Urdu completely.
 
-### OUTPUT FORMAT REQUIREMENTS
-You must return the response strictly as a valid JSON array of objects. Do not include markdown code blocks (like \`\`\`json), introduction, or conversational filler. Each object in the array represents a single text block/line containing these exact keys:
-- "text": The exact transcribed text snippet/sentence.
-- "start": Start time in seconds (float, e.g., 1.25)
-- "end": End time in seconds (float, e.g., 3.40)
-
-### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
+### TARGET LANGUAGE RULE
 ${languageRule}
-3. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
+4. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
 
-### EXAMPLE OF EXPECTED JSON OUTPUT:
+Format:
 [
-  {"text": "آج ہم بات کریں گے", "start": 0.00, "end": 1.50},
-  {"text": "AI Technology کے بارے میں", "start": 1.55, "end": 4.10}
+  {"text": "اپنی ویڈیو کو بہترین بنائیں۔", "start": 0.00, "end": 2.50}
 ]
 
-Input Audio/Video File: [Analyze the uploaded media and apply these rules strictly based on the target language requested by the user].`;
+Input Media File: [Process the audio track normally and output the standard JSON payload based on the user's settings].`;
 
       const response = await ai.models.generateContent({
         model: modelToUse,

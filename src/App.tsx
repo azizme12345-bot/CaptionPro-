@@ -1060,9 +1060,11 @@ export default function App() {
       recorder.start(500);
       await video.play().catch(() => {});
 
-      const totalDuration = video.duration || duration || 10;
+      // Ensure total duration accurately reflects video duration or max caption timestamp (e.g. 21-22 seconds)
+      const maxCaptionEnd = captions.reduce((max, c) => Math.max(max, c.endSec || (typeof c.end === 'number' ? c.end : 0)), 0);
+      const totalDuration = Math.max(video.duration || 0, duration || 0, maxCaptionEnd, 10);
 
-      // Real-time animation frame loop ensuring full video playback until complete duration
+      // Real-time animation frame loop ensuring full video playback until complete duration is completely rendered
       await new Promise<void>((resolve) => {
         let isResolved = false;
 
@@ -1070,7 +1072,7 @@ export default function App() {
           if (isResolved) return;
 
           const currentTime = video.currentTime;
-          const isFinished = video.ended || currentTime >= (totalDuration - 0.1);
+          const isFinished = currentTime >= (totalDuration - 0.05) || (video.ended && currentTime >= (totalDuration - 0.3));
 
           if (isFinished) {
             isResolved = true;

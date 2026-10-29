@@ -1,3 +1,6 @@
+export const maxDuration = 60; // Increase server timeout to 60 seconds for video rendering
+export const dynamic = 'force-dynamic';
+
 export const config = {
   api: {
     bodyParser: {

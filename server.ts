@@ -563,7 +563,7 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
   }
 
   // API Endpoint for video export (burning subtitles into MP4 with full duration and preserved audio)
-  app.post('/api/export-video', handleUpload, async (req, res) => {
+  app.post(['/api/export-video', '/api/export'], handleUpload, async (req, res) => {
     let inputPath = req.file?.path;
     let srtPath = '';
     let outputPath = '';
@@ -613,6 +613,7 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
           .outputOptions([
             '-vf', `subtitles=${escapedSrtPath}`,
             '-c:v', 'libx264',
+            '-preset', 'ultrafast',
             '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart',
             '-map', '0:v:0',
@@ -622,7 +623,7 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
           ])
           .save(outputPath)
           .on('end', () => {
-            console.log("[Export] FFmpeg rendering completed successfully.");
+            console.log("[Export] FFmpeg rendering completed successfully with ultrafast preset.");
             resolve(true);
           })
           .on('error', (err: any) => {
@@ -631,6 +632,7 @@ Input Audio/Video File: [Analyze the uploaded media and apply these rules strict
             ffmpeg(inputPath)
               .outputOptions([
                 '-c:v', 'libx264',
+                '-preset', 'ultrafast',
                 '-pix_fmt', 'yuv420p',
                 '-movflags', '+faststart',
                 '-map', '0:v:0',

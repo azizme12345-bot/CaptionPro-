@@ -463,13 +463,13 @@ export default function App() {
   // Video selection / drag & drop handler
   const processUploadedFile = (file: File) => {
     if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|webm|mov|mkv)$/i)) {
-      setStatusMessage('Please select a valid video file (.mp4, .webm, .mov).');
+      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 100MB.');
       setStatusType('error');
       return;
     }
 
     if (file.size > 100 * 1024 * 1024) {
-      setStatusMessage('Error: Video file exceeds 100MB size limit.');
+      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 100MB.');
       setStatusType('error');
       return;
     }
@@ -799,15 +799,12 @@ export default function App() {
         console.warn("API request encountered network/proxy issue, activating resilient client engine:", fetchErr);
       }
 
-      // 2. If API was unreachable or timed out, seamlessly generate fallback captions
-      if (!captionsData || captionsData.length === 0) {
-        console.log("Using resilient client captions generator for:", language);
-        const fallback = generateFallbackCaptions(language, Math.floor(duration || 15));
-        const chunked = splitIntoWordChunks(fallback, maxWordsPerLine);
-        setCaptions(chunked);
-        setSelectedClipId(chunked[0]?.id || 'seg-1');
-        setStatusMessage(`Transcribed speech in ${language} (${chunked.length} single-line segments). Ready to edit!`);
-        setStatusType('success');
+      // 2. If API was unreachable or timed out or returned placeholder, show error notice
+      if (!captionsData || captionsData.length === 0 || (captionsData[0]?.text || '').includes('اپنی ویڈیو کو بہترین')) {
+        console.warn("Caption generation incomplete or placeholder detected.");
+        setStatusMessage("Caption Generation Incomplete. Please try uploading the video again or check your audio track clarity.");
+        setStatusType("error");
+        setIsTranscribing(false);
         return;
       }
 
@@ -840,13 +837,9 @@ export default function App() {
       setStatusMessage(`Transcribed ${enforcedChunks.length} short-form subtitle segments successfully in ${language}.`);
       setStatusType('success');
     } catch (err: any) {
-      console.error("Transcription handler fallback:", err);
-      const fallback = generateFallbackCaptions(language, Math.floor(duration || 15));
-      const chunked = splitIntoWordChunks(fallback, maxWordsPerLine);
-      setCaptions(chunked);
-      setSelectedClipId(chunked[0]?.id || 'seg-1');
-      setStatusMessage(`Captions ready in ${language} (${chunked.length} clips).`);
-      setStatusType('success');
+      console.error("Transcription handler error:", err);
+      setStatusMessage("Caption Generation Incomplete. Please try uploading the video again or check your audio track clarity.");
+      setStatusType("error");
     } finally {
       setIsTranscribing(false);
     }

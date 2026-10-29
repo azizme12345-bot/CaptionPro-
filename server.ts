@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
+import { HfInference } from '@huggingface/inference';
 import dotenv from 'dotenv';
 import multer from 'multer';
 import fs from 'fs';
@@ -19,7 +20,7 @@ if (ffmpegStatic) {
 }
 
 const upload = multer({
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB limit
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
       const uploadDir = path.join(__dirname, 'uploads');
@@ -42,7 +43,7 @@ const handleUpload = (req: express.Request, res: express.Response, next: express
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({
           error: 'FILE_TOO_LARGE',
-          message: 'Video file exceeds the 100MB limit. Please upload a smaller video clip.'
+          message: 'Video file exceeds the 500MB limit. Please upload a video under 500MB.'
         });
       }
       return res.status(400).json({ error: 'UPLOAD_ERROR', message: err.message || 'File upload failed' });
@@ -65,8 +66,8 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: '100mb' }));
-  app.use(express.urlencoded({ limit: '100mb', extended: true }));
+  app.use(express.json({ limit: '500mb' }));
+  app.use(express.urlencoded({ limit: '500mb', extended: true }));
 
   // Global JSON error handler for body parsing errors (guarantees JSON response, never HTML)
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -75,7 +76,7 @@ async function startServer() {
       if (err.type === 'entity.too.large' || err.status === 413) {
         return res.status(413).json({
           error: 'PAYLOAD_TOO_LARGE',
-          message: 'Request payload is too large. Please use a shorter video clip.'
+          message: 'Request payload is too large. Please upload a video under 500MB.'
         });
       }
       return res.status(err.status || 400).json({
@@ -96,446 +97,265 @@ async function startServer() {
     },
   });
 
-  // API Endpoint for generating AI captions (enforcing 4-6 words per line)
-  app.post('/api/generate-captions', async (req, res) => {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(503).json({ error: 'MISSING_API_KEY' });
+  // Whisper language codes supported by openai/whisper-large-v3
+  const WHISPER_LANGUAGE_CODES: Record<string, string> = {
+    'English': 'en',
+    'Urdu': 'ur',
+    'Roman Urdu': 'ur',
+    'Roman Urdu / Urdu (Likhne Type)': 'ur',
+    'Hindi': 'hi',
+    'Spanish': 'es',
+    'French': 'fr',
+    'German': 'de',
+    'Arabic': 'ar',
+    'Portuguese': 'pt',
+    'Japanese': 'ja',
+    'Italian': 'it',
+    'Dutch': 'nl',
+    'Russian': 'ru'
+  };
+
+  // Helper to format seconds into MM:SS timestamp
+  function formatSecToMMSS(sec: number): string {
+    const safeSec = Math.max(0, isNaN(sec) ? 0 : sec);
+    const m = Math.floor(safeSec / 60);
+    const s = Math.floor(safeSec % 60);
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+
+  // Transcribe audio strictly using Hugging Face Whisper API (openai/whisper-large-v3)
+  // Token is read only from server environment variable HF_TOKEN (never exposed to browser or code)
+  async function processWhisperAudio(audioBuffer: Buffer, language: string) {
+    const hfToken = process.env.HF_TOKEN;
+    if (!hfToken) {
+      const err = new Error('MISSING_HF_TOKEN');
+      (err as any).code = 'MISSING_HF_TOKEN';
+      throw err;
     }
+
+    const langCode = WHISPER_LANGUAGE_CODES[language] || 'en';
+    const hf = new HfInference(hfToken);
+    let whisperRes: any = null;
+
     try {
-      const { topic, language = 'English', durationSeconds = 15 } = req.body;
-      const isPureUrdu = language === 'Urdu';
-      const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
-
-      let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
-      if (isPureUrdu) {
-        languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
-2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
-      } else if (isRomanUrdu) {
-        languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
-      } else {
-        languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Generate captions in ${language}.`;
+      console.log(`[Whisper API] Transcribing audio with openai/whisper-large-v3 (${language} -> ${langCode})...`);
+      whisperRes = await (hf as any).automaticSpeechRecognition({
+        model: 'openai/whisper-large-v3',
+        inputs: audioBuffer,
+        data: audioBuffer,
+        parameters: {
+          return_timestamps: true,
+          language: langCode
+        }
+      });
+    } catch (sdkErr: any) {
+      console.warn("[Whisper API] SDK notice, connecting directly to Hugging Face Inference router:", sdkErr.message);
+      const directRes = await fetch('https://api-inference.huggingface.co/models/openai/whisper-large-v3', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'audio/wav',
+          'x-wait-for-model': 'true'
+        },
+        body: new Uint8Array(audioBuffer)
+      });
+      if (!directRes.ok) {
+        const errorText = await directRes.text();
+        throw new Error(`Hugging Face Whisper API returned ${directRes.status}: ${errorText}`);
       }
+      whisperRes = await directRes.json();
+    }
 
-      const prompt = `You are an expert Audio Transcription and Video Captioning Engine for a video editing app called CaptionPro. 
+    const rawChunks: Array<{ text: string; start: number; end: number }> = [];
 
-Your task is to generate realistic timed video captions about "${topic || 'modern creator video tips'}" for a video with duration ${durationSeconds} seconds, formatted dynamically based on the requested language.
-
-### OUTPUT FORMAT REQUIREMENTS
-You must return the response strictly as a valid JSON array of objects. Do not include markdown code blocks (like \`\`\`json), introduction, or conversational filler. Each object in the array represents a single text block/line containing these exact keys:
-- "text": The exact transcribed text snippet/sentence.
-- "start": Start time in seconds (float, e.g., 1.25)
-- "end": End time in seconds (float, e.g., 3.40)
-
-### CRITICAL RULES FOR MULTI-LANGUAGE & URDU
-${languageRule}
-3. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
-
-### EXAMPLE OF EXPECTED JSON OUTPUT:
-[
-  {"text": "آج ہم بات کریں گے", "start": 0.00, "end": 1.50},
-  {"text": "AI Technology کے بارے میں", "start": 1.55, "end": 4.10}
-]`;
-
-      let captions = [];
-      try {
-        const geminiCall = ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
-          contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  start: { type: Type.NUMBER, description: "Start time in seconds (float, e.g., 1.25)" },
-                  end: { type: Type.NUMBER, description: "End time in seconds (float, e.g., 3.40)" },
-                  text: { type: Type.STRING, description: "Exact transcribed text snippet/sentence" }
-                },
-                required: ["start", "end", "text"]
-              }
-            }
-          }
+    if (whisperRes?.chunks && Array.isArray(whisperRes.chunks) && whisperRes.chunks.length > 0) {
+      for (const chunk of whisperRes.chunks) {
+        const text = (chunk.text || '').trim();
+        if (!text) continue;
+        const start = Array.isArray(chunk.timestamp) ? (chunk.timestamp[0] ?? 0) : 0;
+        const end = Array.isArray(chunk.timestamp) ? (chunk.timestamp[1] ?? (start + 2.5)) : (start + 2.5);
+        rawChunks.push({ text, start, end: Math.max(start + 0.4, end) });
+      }
+    } else if (whisperRes?.words && Array.isArray(whisperRes.words) && whisperRes.words.length > 0) {
+      let currentWordGroup: any[] = [];
+      for (const w of whisperRes.words) {
+        currentWordGroup.push(w);
+        if (currentWordGroup.length >= 5) {
+          const text = currentWordGroup.map(item => item.word || item.text).join(' ').trim();
+          const start = currentWordGroup[0].start ?? 0;
+          const end = currentWordGroup[currentWordGroup.length - 1].end ?? (start + 2.0);
+          rawChunks.push({ text, start, end });
+          currentWordGroup = [];
+        }
+      }
+      if (currentWordGroup.length > 0) {
+        const text = currentWordGroup.map(item => item.word || item.text).join(' ').trim();
+        const start = currentWordGroup[0].start ?? 0;
+        const end = currentWordGroup[currentWordGroup.length - 1].end ?? (start + 2.0);
+        rawChunks.push({ text, start, end });
+      }
+    } else if (typeof whisperRes?.text === 'string' && whisperRes.text.trim()) {
+      const words = whisperRes.text.trim().split(/\s+/).filter(Boolean);
+      const chunkSize = 5;
+      let runningTime = 0;
+      for (let i = 0; i < words.length; i += chunkSize) {
+        const chunkWords = words.slice(i, i + chunkSize);
+        const duration = chunkWords.length * 0.45;
+        rawChunks.push({
+          text: chunkWords.join(' '),
+          start: runningTime,
+          end: runningTime + duration
         });
-        const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT')), 7000));
-        const response = await Promise.race([geminiCall, timeoutPromise]) as any;
+        runningTime += duration;
+      }
+    }
 
-        const jsonText = response.text || '[]';
-        captions = JSON.parse(jsonText);
-      } catch (geminiErr: any) {
-        console.warn("Gemini generation fallback triggered:", geminiErr.message);
-        const templates: Record<string, string[]> = {
-          Urdu: [
-            'اپنی ویڈیو کو بہترین بنائیں۔',
-            'ہر لفظ کو واضح رکھیں۔',
-            'شارٹس پر مکمل توجہ لیں۔',
-            'نئے ناظرین کو متوجہ کریں۔'
-          ],
-          'Roman Urdu / Urdu (Likhne Type)': [
-            'Zameen par naya aagaz karein.',
-            'Har lafz ko wazeh rakhein.',
-            'Nazil hone wali barkat dekhein.',
-            'Behtareen video viral banayein.'
-          ],
-          'Roman Urdu': [
-            'Zameen par naya aagaz karein.',
-            'Har lafz ko wazeh rakhein.',
-            'Nazil hone wali barkat dekhein.',
-            'Behtareen video viral banayein.'
-          ],
-          English: [
-            'Make every single word count.',
-            'Deliver your message with clarity.',
-            'Capture attention instantly and clearly.',
-            'Turn casual viewers into followers.'
-          ],
-          Spanish: [
-            'Domina los subtítulos en video.',
-            'Mantén cada frase bien corta.',
-            'Capta la atención al instante.',
-            'Aumenta el alcance en redes.'
-          ],
-          Hindi: [
-            'Har shabd ko prabhavi banayein.',
-            'Apna sandesh bilkul spasht rakhein.',
-            'Darshakon ka dhyan turant aakarshit karein.',
-            'Apne videos ko viral banayein.'
-          ]
-        };
+    // If no speech detected in real audio track, return empty array (NO SAMPLE OR DEMO CAPTIONS)
+    if (rawChunks.length === 0) {
+      return [];
+    }
 
-        const lines = isPureUrdu
-          ? templates.Urdu
-          : isRomanUrdu
-          ? (templates['Roman Urdu'] || templates['Roman Urdu / Urdu (Likhne Type)'])
-          : (templates[language] || templates.English);
-        const step = Math.max(2, Math.floor(durationSeconds / lines.length));
-        captions = lines.map((text, idx) => ({
-          start: `00:${String(idx * step).padStart(2, '0')}`,
-          end: `00:${String(Math.min(durationSeconds, (idx + 1) * step)).padStart(2, '0')}`,
-          text
-        }));
+    // Format into standard CaptionSegment structure with 4-6 words limit
+    const formattedSegments = [];
+    let segIdx = 1;
+
+    for (const item of rawChunks) {
+      const words = item.text.split(/\s+/).filter(Boolean);
+      if (words.length <= 6) {
+        formattedSegments.push({
+          id: `seg-${segIdx++}`,
+          start: formatSecToMMSS(item.start),
+          end: formatSecToMMSS(item.end),
+          startSec: parseFloat(item.start.toFixed(2)),
+          endSec: parseFloat(item.end.toFixed(2)),
+          text: item.text
+        });
+      } else {
+        const chunkSize = 5;
+        const totalDuration = Math.max(0.5, item.end - item.start);
+        for (let i = 0; i < words.length; i += chunkSize) {
+          const slice = words.slice(i, i + chunkSize);
+          const startFraction = i / words.length;
+          const endFraction = (i + slice.length) / words.length;
+          const subStart = item.start + (startFraction * totalDuration);
+          const subEnd = item.start + (endFraction * totalDuration);
+          formattedSegments.push({
+            id: `seg-${segIdx++}`,
+            start: formatSecToMMSS(subStart),
+            end: formatSecToMMSS(subEnd),
+            startSec: parseFloat(subStart.toFixed(2)),
+            endSec: parseFloat(subEnd.toFixed(2)),
+            text: slice.join(' ')
+          });
+        }
+      }
+    }
+
+    return formattedSegments;
+  }
+
+  // API Endpoint for video transcription using Hugging Face Whisper Large v3
+  app.post('/api/transcribe-video', handleUpload, async (req, res) => {
+    let filePath = req.file?.path;
+    let extractedWavPath = '';
+
+    try {
+      const language = req.body.language || 'English';
+      let audioBuffer: Buffer | null = null;
+
+      if (req.body.audioBase64) {
+        audioBuffer = Buffer.from(req.body.audioBase64, 'base64');
+      } else if (filePath) {
+        extractedWavPath = path.join(path.dirname(filePath), `whisper-${Date.now()}.wav`);
+        await new Promise((resolve, reject) => {
+          ffmpeg(filePath!)
+            .noVideo()
+            .audioCodec('pcm_s16le')
+            .audioChannels(1)
+            .audioFrequency(16000)
+            .output(extractedWavPath)
+            .on('end', resolve)
+            .on('error', reject)
+            .run();
+        });
+        audioBuffer = fs.readFileSync(extractedWavPath);
       }
 
-      res.json({ captions });
-    } catch (error: any) {
-      console.error("Gemini caption generation error:", error);
-      res.status(500).json({ error: error.message || 'Failed to generate captions' });
+      if (!audioBuffer) {
+        return res.status(400).json({ error: 'NO_AUDIO', message: 'No audio data or video file received for transcription.' });
+      }
+
+      const captions = await processWhisperAudio(audioBuffer, language);
+      return res.json({ captions, count: captions.length });
+    } catch (err: any) {
+      console.error("[Transcription Error]", err);
+      if (err.message === 'MISSING_HF_TOKEN' || err.code === 'MISSING_HF_TOKEN') {
+        return res.status(400).json({
+          error: 'MISSING_HF_TOKEN',
+          message: 'Hugging Face API token (HF_TOKEN) is not configured in the server environment variables. Please set HF_TOKEN to transcribe video audio with Hugging Face Whisper.'
+        });
+      }
+      return res.status(500).json({
+        error: 'WHISPER_TRANSCRIPTION_FAILED',
+        message: err.message || 'Hugging Face Whisper transcription failed'
+      });
+    } finally {
+      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) {}
+      try { if (extractedWavPath && fs.existsSync(extractedWavPath)) fs.unlinkSync(extractedWavPath); } catch (e) {}
     }
   });
 
-  // API Endpoint for real video transcription
-  app.post('/api/transcribe-video', handleUpload, async (req, res) => {
-    if (!process.env.GEMINI_API_KEY) {
-      return res.status(503).json({ error: 'MISSING_API_KEY' });
-    }
-    // Support direct client-extracted audioBase64 (compact & fast) or uploaded video file
-    if (req.body.audioBase64) {
-      const language = req.body.language || 'English';
-      const mimeType = req.body.mimeType || 'audio/wav';
-      const audioBase64 = req.body.audioBase64;
-      try {
-        console.log("Transcribing client-extracted audio:", mimeType, "language:", language);
-
-        const isPureUrdu = language === 'Urdu';
-        const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
-
-        let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
-        if (isPureUrdu) {
-          languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
-2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
-        } else if (isRomanUrdu) {
-          languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
-        } else {
-          languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Transcribe the spoken audio directly into ${language}.`;
-        }
-
-        const prompt = `You are the primary Audio Transcription Engine for CaptionPro. Your only job is to return precise captions.
-
-### RULES
-1. Output Format: Return strictly a valid JSON array of objects. No markdown formatting (like \`\`\`json), no introduction, and no conversational text.
-2. Structure: Use only "text", "start", and "end" keys. Keep segments between 4 to 8 words per block.
-3. Language: Strictly match the user's selected language. If Urdu is chosen, output beautiful, complete Unicode Urdu script (Nastaliq compatible) and avoid Roman Urdu completely.
-
-### TARGET LANGUAGE RULE
-${languageRule}
-4. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
-
-### EXAMPLE OF EXPECTED JSON OUTPUT:
-[
-  {"text": "اپنی ویڈیو کو بہترین بنائیں۔", "start": 0.00, "end": 2.50}
-]
-
-Input Media File: [Process the audio track normally and output the standard JSON payload based on the user's settings].`;
-
-        // Transcribe audio using gemini-3.1-flash-lite with 10s timeout protection
-        let response;
-        try {
-          const geminiCall = ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite',
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: mimeType,
-                    data: audioBase64
-                  }
-                },
-                { text: prompt }
-              ]
-            },
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    start: { type: Type.NUMBER, description: 'Start time in seconds (float, e.g., 1.25)' },
-                    end: { type: Type.NUMBER, description: 'End time in seconds (float, e.g., 3.40)' },
-                    text: { type: Type.STRING, description: 'Exact transcribed text snippet/sentence' }
-                  },
-                  required: ['start', 'end', 'text']
-                }
-              }
-            }
-          });
-          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT')), 10000));
-          response = await Promise.race([geminiCall, timeoutPromise]) as any;
-        } catch (modelErr: any) {
-          console.warn("Retrying with gemini-3.8-flash due to:", modelErr.message);
-          try {
-            const geminiCall = ai.models.generateContent({
-              model: 'gemini-3.8-flash',
-              contents: {
-                parts: [
-                  {
-                    inlineData: {
-                      mimeType: mimeType,
-                      data: audioBase64
-                    }
-                  },
-                  { text: prompt }
-                ]
-              },
-              config: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      start: { type: Type.NUMBER, description: 'Start time in seconds (float, e.g., 1.25)' },
-                      end: { type: Type.NUMBER, description: 'End time in seconds (float, e.g., 3.40)' },
-                      text: { type: Type.STRING, description: 'Exact transcribed text snippet/sentence' }
-                    },
-                    required: ['start', 'end', 'text']
-                  }
-                }
-              }
-            });
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('AI_TIMEOUT')), 8000));
-            response = await Promise.race([geminiCall, timeoutPromise]) as any;
-          } catch (retryErr: any) {
-            console.warn("Both models unavailable, using intelligent transcript fallback:", retryErr.message);
-            response = null;
-          }
-        }
-
-        if (response && response.text) {
-          const jsonText = response.text || '[]';
-          const captions = JSON.parse(jsonText);
-          if (Array.isArray(captions) && captions.length > 0) {
-            return res.json({ captions });
-          }
-        }
-
-        // Resilient audio transcription fallback
-        const templates: Record<string, string[]> = {
-          Urdu: [
-            'اپنی ویڈیو کو بہترین بنائیں۔',
-            'ہر لفظ کو واضح رکھیں۔',
-            'شارٹس پر مکمل توجہ لیں۔',
-            'نئے ناظرین کو متوجہ کریں۔'
-          ],
-          'Roman Urdu / Urdu (Likhne Type)': [
-            'Zameen par naya aagaz karein.',
-            'Har lafz ko wazeh rakhein.',
-            'Nazil hone wali barkat dekhein.',
-            'Behtareen video viral banayein.'
-          ],
-          'Roman Urdu': [
-            'Zameen par naya aagaz karein.',
-            'Har lafz ko wazeh rakhein.',
-            'Nazil hone wali barkat dekhein.',
-            'Behtareen video viral banayein.'
-          ],
-          English: [
-            'Make every single word count.',
-            'Deliver your message with clarity.',
-            'Capture attention instantly and clearly.',
-            'Turn casual viewers into followers.'
-          ]
-        };
-        const lines = isPureUrdu
-          ? templates.Urdu
-          : isRomanUrdu
-          ? (templates['Roman Urdu'] || templates['Roman Urdu / Urdu (Likhne Type)'])
-          : (templates[language] || templates.English);
-        const captions = lines.map((text, idx) => ({
-          start: `00:${String(idx * 3).padStart(2, '0')}`,
-          end: `00:${String((idx + 1) * 3).padStart(2, '0')}`,
-          text
-        }));
-        return res.json({ captions });
-      } catch (audioErr: any) {
-        console.error("Audio base64 transcription error:", audioErr);
-        const templates: Record<string, string[]> = {
-          Urdu: [
-            'اپنی ویڈیو کو بہترین بنائیں۔',
-            'ہر لفظ کو واضح رکھیں۔',
-            'شارٹس پر مکمل توجہ لیں۔',
-            'نئے ناظرین کو متوجہ کریں۔'
-          ],
-          'Roman Urdu / Urdu (Likhne Type)': [
-            'Zameen par naya aagaz karein.',
-            'Har lafz ko wazeh rakhein.',
-            'Nazil hone wali barkat dekhein.',
-            'Behtareen video viral banayein.'
-          ],
-          'Roman Urdu': [
-            'Zameen par naya aagaz karein.',
-            'Har lafz ko wazeh rakhein.',
-            'Nazil hone wali barkat dekhein.',
-            'Behtareen video viral banayein.'
-          ],
-          English: [
-            'Make every single word count.',
-            'Deliver your message with clarity.',
-            'Capture attention instantly and clearly.',
-            'Turn casual viewers into followers.'
-          ]
-        };
-        const isPureUrduCatch = language === 'Urdu';
-        const isRomanUrduCatch = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
-        const lines = isPureUrduCatch
-          ? templates.Urdu
-          : isRomanUrduCatch
-          ? (templates['Roman Urdu'] || templates['Roman Urdu / Urdu (Likhne Type)'])
-          : (templates[language] || templates.English);
-        const captions = lines.map((text, idx) => ({
-          start: `00:${String(idx * 3).padStart(2, '0')}`,
-          end: `00:${String((idx + 1) * 3).padStart(2, '0')}`,
-          text
-        }));
-        return res.json({ captions });
-      }
-    }
-
+  // Alias endpoint for audio transcription
+  app.post('/api/generate-captions', handleUpload, async (req, res) => {
     let filePath = req.file?.path;
-    let audioPath = '';
+    let extractedWavPath = '';
+
     try {
-      if (!filePath) {
-        return res.status(400).json({ error: 'No video file or audio data uploaded.' });
-      }
-
-      console.log("Starting transcription for file:", filePath);
       const language = req.body.language || 'English';
-      
-      let mediaPart: { inlineData: { mimeType: string; data: string } };
-      let modelToUse = 'gemini-3.1-flash-lite';
+      let audioBuffer: Buffer | null = null;
 
-      try {
-        audioPath = path.join(path.dirname(filePath), `${Date.now()}-audio.mp3`);
+      if (req.body.audioBase64) {
+        audioBuffer = Buffer.from(req.body.audioBase64, 'base64');
+      } else if (filePath) {
+        extractedWavPath = path.join(path.dirname(filePath), `whisper-${Date.now()}.wav`);
         await new Promise((resolve, reject) => {
-          ffmpeg(filePath)
-            .toFormat('mp3')
-            .save(audioPath)
+          ffmpeg(filePath!)
+            .noVideo()
+            .audioCodec('pcm_s16le')
+            .audioChannels(1)
+            .audioFrequency(16000)
+            .output(extractedWavPath)
             .on('end', resolve)
-            .on('error', reject);
+            .on('error', reject)
+            .run();
         });
-        console.log("Audio extracted to:", audioPath);
-        const audioBuffer = fs.readFileSync(audioPath);
-        mediaPart = {
-          inlineData: {
-            mimeType: 'audio/mp3',
-            data: audioBuffer.toString('base64')
-          }
-        };
-      } catch (extractErr) {
-        console.warn("Audio extraction fallback to direct video file:", extractErr);
-        const videoBuffer = fs.readFileSync(filePath);
-        mediaPart = {
-          inlineData: {
-            mimeType: req.file?.mimetype || 'video/mp4',
-            data: videoBuffer.toString('base64')
-          }
-        };
-        modelToUse = 'gemini-3.8-flash';
+        audioBuffer = fs.readFileSync(extractedWavPath);
       }
 
-      const isPureUrdu = language === 'Urdu';
-      const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
-
-      let languageRule = `1. Target Language Detection: Always match the user's requested language (${language}).`;
-      if (isPureUrdu) {
-        languageRule = `1. Target Language Detection: Always match the user's requested language. The requested language is URDU. You must write the "text" entirely in standard Urdu Unicode characters (Nastaliq/Jalali compatible script). Do NOT use Roman Urdu (e.g., do not write "kia haal hai", write "کیا حال ہے").
-2. Code-Switching: If the speaker mixes a few English words while speaking Urdu, retain the English words in their original script (or appropriate translation context) but maintain the primary Urdu script flow (e.g., "AI Technology کے بارے میں").`;
-      } else if (isRomanUrdu) {
-        languageRule = `1. Target Language: Roman Urdu. You must write the "text" phonetically in standard Latin/English alphabet characters (e.g. "Zameen par naya aagaz karein", "Nazil hone wali barkat"). Absolutely NEVER use Arabic script characters.`;
-      } else {
-        languageRule = `1. Target Language Detection: Always match the user's requested language (${language}). Transcribe the spoken audio directly into ${language}.`;
+      if (!audioBuffer) {
+        return res.status(400).json({
+          error: 'AUDIO_REQUIRED',
+          message: 'Please upload a video file or record audio to transcribe with Hugging Face Whisper. Sample captions have been removed.'
+        });
       }
 
-      const prompt = `You are the primary Audio Transcription Engine for CaptionPro. Your only job is to return precise captions.
-
-### RULES
-1. Output Format: Return strictly a valid JSON array of objects. No markdown formatting (like \`\`\`json), no introduction, and no conversational text.
-2. Structure: Use only "text", "start", and "end" keys. Keep segments between 4 to 8 words per block.
-3. Language: Strictly match the user's selected language. If Urdu is chosen, output beautiful, complete Unicode Urdu script (Nastaliq compatible) and avoid Roman Urdu completely.
-
-### TARGET LANGUAGE RULE
-${languageRule}
-4. Word Limits: Keep the transcript segments split logically. Ensure each object does not exceed 4 to 8 words per line to fit standard short-form vertical video layouts (TikTok/Reels/Shorts).
-
-Format:
-[
-  {"text": "اپنی ویڈیو کو بہترین بنائیں۔", "start": 0.00, "end": 2.50}
-]
-
-Input Media File: [Process the audio track normally and output the standard JSON payload based on the user's settings].`;
-
-      const response = await ai.models.generateContent({
-        model: modelToUse,
-        contents: { parts: [mediaPart, { text: prompt }] },
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                start: { type: Type.NUMBER, description: "Start time in seconds (float, e.g., 1.25)" },
-                end: { type: Type.NUMBER, description: "End time in seconds (float, e.g., 3.40)" },
-                text: { type: Type.STRING, description: "Exact transcribed text snippet/sentence" }
-              },
-              required: ["start", "end", "text"]
-            }
-          }
-        }
+      const captions = await processWhisperAudio(audioBuffer, language);
+      return res.json({ captions, count: captions.length });
+    } catch (err: any) {
+      console.error("[Generate Captions Error]", err);
+      if (err.message === 'MISSING_HF_TOKEN' || err.code === 'MISSING_HF_TOKEN') {
+        return res.status(400).json({
+          error: 'MISSING_HF_TOKEN',
+          message: 'Hugging Face API token (HF_TOKEN) is not configured in the server environment variables. Please set HF_TOKEN to transcribe video audio with Hugging Face Whisper.'
+        });
+      }
+      return res.status(500).json({
+        error: 'WHISPER_TRANSCRIPTION_FAILED',
+        message: err.message || 'Hugging Face Whisper transcription failed'
       });
-
-      const jsonText = response.text || '[]';
-      const captions = JSON.parse(jsonText);
-
-      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch(e) {}
-      try { if (audioPath && fs.existsSync(audioPath)) fs.unlinkSync(audioPath); } catch(e) {}
-
-      res.json({ captions });
-    } catch (error: any) {
-      console.error("Video transcription error:", error);
-      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch(e) {}
-      try { if (audioPath && fs.existsSync(audioPath)) fs.unlinkSync(audioPath); } catch(e) {}
-      res.status(500).json({ error: 'Transcription failed: ' + (error.message || 'Unknown error') });
+    } finally {
+      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) {}
+      try { if (extractedWavPath && fs.existsSync(extractedWavPath)) fs.unlinkSync(extractedWavPath); } catch (e) {}
     }
   });
 

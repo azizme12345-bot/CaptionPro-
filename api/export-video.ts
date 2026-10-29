@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic';
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '100mb',
+      sizeLimit: '500mb',
     },
   },
 };

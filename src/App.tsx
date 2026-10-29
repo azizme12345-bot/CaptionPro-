@@ -71,34 +71,6 @@ const SAMPLE_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bu
 // Configurable Export Server URL - defaults to internal /api/export-video or an external server (e.g. Render.com / VPS) via VITE_EXPORT_SERVER_URL
 export const EXPORT_SERVER_URL = (import.meta as any).env?.VITE_EXPORT_SERVER_URL || '/api/export-video';
 
-// Default segments enforcing modern short-form standard (4 to 6 words per line)
-const DEFAULT_SEGMENTS: CaptionSegment[] = [
-  {
-    id: 'seg-1',
-    start: '00:00',
-    end: '00:03',
-    startSec: 0,
-    endSec: 3,
-    text: 'Make every single word count.'
-  },
-  {
-    id: 'seg-2',
-    start: '00:03',
-    end: '00:07',
-    startSec: 3,
-    endSec: 7,
-    text: 'Deliver your message with clarity.'
-  },
-  {
-    id: 'seg-3',
-    start: '00:07',
-    end: '00:12',
-    startSec: 7,
-    endSec: 12,
-    text: 'Capture attention instantly and clearly.'
-  }
-];
-
 const SUPPORTED_LANGUAGES = [
   'English',
   'Roman Urdu',
@@ -369,11 +341,15 @@ export default function App() {
   const [duration, setDuration] = useState<number>(15);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
 
-  // Captions state & chunking limit
-  const [captions, setCaptions] = useState<CaptionSegment[]>(DEFAULT_SEGMENTS);
-  const [selectedClipId, setSelectedClipId] = useState<string>('seg-1');
+  // Captions state & chunking limit (strictly real audio from Hugging Face Whisper - no sample/demo captions)
+  const [captions, setCaptions] = useState<CaptionSegment[]>([]);
+  const [selectedClipId, setSelectedClipId] = useState<string>('');
   const [language, setLanguage] = useState<string>('English');
   const [maxWordsPerLine, setMaxWordsPerLine] = useState<number>(5);
+
+  // Transcription loading progress & status
+  const [transcribeProgress, setTranscribeProgress] = useState<number>(0);
+  const [transcribeStatusText, setTranscribeStatusText] = useState<string>('');
 
   // Typography & Custom Font State
   const [selectedFont, setSelectedFont] = useState<string>('Plus Jakarta Sans');
@@ -395,7 +371,7 @@ export default function App() {
   const [isDraggingCaption, setIsDraggingCaption] = useState<boolean>(false);
 
   // Operation status & drag-over
-  const [statusMessage, setStatusMessage] = useState<string>('Ready to edit. Pinch preview to resize captions, or drag anywhere to reposition.');
+  const [statusMessage, setStatusMessage] = useState<string>('Upload a video (up to 500MB) to transcribe real audio with Hugging Face Whisper Large v3.');
   const [statusType, setStatusType] = useState<'info' | 'error' | 'success'>('info');
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -468,16 +444,16 @@ export default function App() {
     }
   };
 
-  // Video selection / drag & drop handler
+  // Video selection / drag & drop handler (Supports videos up to 500MB)
   const processUploadedFile = (file: File) => {
     if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|webm|mov|mkv)$/i)) {
-      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 100MB.');
+      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 500MB.');
       setStatusType('error');
       return;
     }
 
-    if (file.size > 100 * 1024 * 1024) {
-      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 100MB.');
+    if (file.size > 500 * 1024 * 1024) {
+      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 500MB.');
       setStatusType('error');
       return;
     }
@@ -486,7 +462,7 @@ export default function App() {
     setVideoFile(file);
     setVideoFileName(file.name);
     setVideoSrc(url);
-    setStatusMessage(`Loaded: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB). Click "Generate Captions" to transcribe.`);
+    setStatusMessage(`Loaded: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB). Click "Generate Captions" to transcribe with Whisper Large v3.`);
     setStatusType('success');
   };
 
@@ -811,90 +787,118 @@ export default function App() {
   };
 
   // Gemini AI Transcription with automatic 4-6 words chunking & resilient error protection
+  // Hugging Face Whisper Large v3 (openai/whisper-large-v3) Real Audio Transcription
   const handleGenerateCaptions = async () => {
+    if (!videoFile && !videoSrc) {
+      setStatusMessage("Please upload a video file first to transcribe real audio.");
+      setStatusType("error");
+      return;
+    }
+
+    // Reset and hide captions so they are displayed only once complete (Requirement 5)
+    setCaptions([]);
+    setSelectedClipId('');
     setIsTranscribing(true);
-    setStatusMessage(`Transcribing spoken audio in ${language} (4-6 words per line)...`);
+    setTranscribeProgress(15);
+    setTranscribeStatusText(`Connecting to Hugging Face Whisper Large v3 (${language})...`);
+    setStatusMessage(`Transcribing real audio with Hugging Face Whisper Large v3 in ${language}...`);
     setStatusType('info');
 
+    // Simulate animated loading progress steps while waiting for Whisper API
+    const progressTimer = setInterval(() => {
+      setTranscribeProgress(prev => {
+        if (prev < 30) {
+          setTranscribeStatusText('Extracting audio track (16kHz mono)...');
+          return prev + 5;
+        } else if (prev < 65) {
+          setTranscribeStatusText(`Transcribing speech with openai/whisper-large-v3 (${language})...`);
+          return prev + 6;
+        } else if (prev < 90) {
+          setTranscribeStatusText('Aligning word-level timestamps and segment chunks...');
+          return prev + 3;
+        }
+        return prev;
+      });
+    }, 450);
+
     try {
-      let captionsData: any = null;
+      let res: Response | null = null;
 
-      // 1. Try sending audio or topic to API with 15s timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-      try {
-        let res: Response | null = null;
-        if (videoFile) {
-          setStatusMessage(`Extracting audio from ${videoFileName}...`);
-          try {
-            const audioBase64 = await extractAudioBase64(videoFile);
-            setStatusMessage(`Analyzing speech with Gemini AI (${language})...`);
-            res = await fetch('/api/transcribe-video', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                audioBase64,
-                mimeType: 'audio/wav',
-                language: language
-              })
-            });
-          } catch (extractErr) {
-            console.warn("Client audio extraction fallback to topic-based generation:", extractErr);
-            res = await fetch('/api/generate-captions', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              signal: controller.signal,
-              body: JSON.stringify({
-                topic: videoFileName,
-                language: language,
-                durationSeconds: Math.floor(duration || 15)
-              })
-            });
-          }
-        } else {
-          setStatusMessage(`Analyzing speech dialogue with Gemini AI in ${language}...`);
-          res = await fetch('/api/generate-captions', {
+      if (videoFile) {
+        // Try compact client-extracted audioBase64 first (extremely fast), or fallback to multipart video file upload
+        try {
+          setTranscribeStatusText("Extracting audio from video file...");
+          const audioBase64 = await extractAudioBase64(videoFile);
+          setTranscribeStatusText(`Sending audio to Hugging Face Whisper Large v3 (${language})...`);
+          res = await fetch('/api/transcribe-video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            signal: controller.signal,
             body: JSON.stringify({
-              topic: videoFileName,
-              language: language,
-              durationSeconds: Math.floor(duration || 15)
+              audioBase64,
+              mimeType: 'audio/wav',
+              language: language
             })
           });
+        } catch (extractErr) {
+          console.warn("Client extraction notice, uploading video file directly to server:", extractErr);
+          const formData = new FormData();
+          formData.append('video', videoFile);
+          formData.append('language', language);
+          res = await fetch('/api/transcribe-video', {
+            method: 'POST',
+            body: formData
+          });
         }
-
-        clearTimeout(timeoutId);
-
-        if (res && res.ok) {
-          const rawText = await res.text();
-          try {
-            const data = JSON.parse(rawText);
-            if (data && data.captions && Array.isArray(data.captions) && data.captions.length > 0) {
-              captionsData = data.captions;
-            }
-          } catch (pe) {
-            console.warn("JSON parse error from server:", pe);
-          }
-        }
-      } catch (fetchErr: any) {
-        clearTimeout(timeoutId);
-        console.warn("API request encountered network/proxy issue, activating resilient client engine:", fetchErr);
+      } else if (videoSrc) {
+        setTranscribeStatusText("Fetching audio from video source...");
+        const vidResp = await fetch(videoSrc);
+        const blob = await vidResp.blob();
+        const file = new File([blob], videoFileName || 'video.mp4', { type: blob.type || 'video/mp4' });
+        const audioBase64 = await extractAudioBase64(file);
+        res = await fetch('/api/transcribe-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioBase64,
+            mimeType: 'audio/wav',
+            language: language
+          })
+        });
       }
 
-      // 2. If API was unreachable or timed out or returned placeholder, show error notice
-      if (!captionsData || captionsData.length === 0 || (captionsData[0]?.text || '').includes('اپنی ویڈیو کو بہترین')) {
-        console.warn("Caption generation incomplete or placeholder detected.");
-        setStatusMessage("Caption Generation Incomplete. Please try uploading the video again or check your audio track clarity.");
-        setStatusType("error");
-        setIsTranscribing(false);
+      clearInterval(progressTimer);
+
+      if (!res) {
+        throw new Error("No response from transcription server");
+      }
+
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        if (data.error === 'MISSING_HF_TOKEN') {
+          setStatusMessage("HF_TOKEN environment variable is not configured on the server. Please add HF_TOKEN to your environment variables to use Hugging Face Whisper.");
+          setStatusType("error");
+          setTranscribeStatusText("Error: HF_TOKEN missing on server.");
+        } else {
+          setStatusMessage(data.message || `Whisper transcription failed: ${data.error || 'Server error'}`);
+          setStatusType("error");
+          setTranscribeStatusText(`Failed: ${data.message || data.error}`);
+        }
         return;
       }
 
-      // 3. Process API captions
+      setTranscribeProgress(95);
+      setTranscribeStatusText("Finalizing captions...");
+
+      const captionsData = data.captions;
+      if (!captionsData || !Array.isArray(captionsData) || captionsData.length === 0) {
+        setStatusMessage("No spoken dialogue was detected in this video's audio track.");
+        setStatusType("info");
+        setTranscribeStatusText("No speech detected.");
+        return;
+      }
+
+      // Format segments
       const parsed: CaptionSegment[] = captionsData.map((item: any, idx: number) => {
         const startSec = parseTimeToSeconds(item.start ?? 0);
         const endSec = parseTimeToSeconds(item.end ?? (startSec + 2.5));
@@ -911,21 +915,29 @@ export default function App() {
           end: endStr,
           startSec,
           endSec: Math.max(startSec + 0.5, endSec),
-          text: (item.text || '').trim() || 'Caption'
+          text: (item.text || '').trim()
         };
       });
 
-      // Enforce strict limit of 4 to 6 words per subtitle block
+      // Split into 4-6 words standard short-form segments
       const enforcedChunks = splitIntoWordChunks(parsed, maxWordsPerLine);
       enforcedChunks.sort((a, b) => a.startSec - b.startSec);
+
+      // Display the captions only once they are complete! (Requirement 5)
+      setTranscribeProgress(100);
+      setTranscribeStatusText("Complete!");
       setCaptions(enforcedChunks);
-      setSelectedClipId(enforcedChunks[0].id);
-      setStatusMessage(`Transcribed ${enforcedChunks.length} short-form subtitle segments successfully in ${language}.`);
+      if (enforcedChunks.length > 0) {
+        setSelectedClipId(enforcedChunks[0].id);
+      }
+      setStatusMessage(`Successfully transcribed ${enforcedChunks.length} segments with Hugging Face Whisper Large v3 (${language})!`);
       setStatusType('success');
     } catch (err: any) {
-      console.error("Transcription handler error:", err);
-      setStatusMessage("Caption Generation Incomplete. Please try uploading the video again or check your audio track clarity.");
+      clearInterval(progressTimer);
+      console.error("Transcription error:", err);
+      setStatusMessage(`Caption Generation Incomplete: ${err.message || 'Please check your audio track or HF_TOKEN.'}`);
       setStatusType("error");
+      setTranscribeStatusText("Transcription failed.");
     } finally {
       setIsTranscribing(false);
     }
@@ -1632,8 +1644,47 @@ export default function App() {
                 </div>
               )}
 
+              {/* ANIMATED EXPORT PREVIEW (CapCut / VN style shrinking-card with laser wave ripple)
+                  CRITICAL: Only affects on-screen preview DOM styling, NOT the output video file */}
+              {isExporting && (
+                <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden rounded-2xl flex flex-col justify-between">
+                  {/* CapCut / VN Laser Scanning Wave Bar */}
+                  <div className="absolute inset-x-0 h-2 bg-gradient-to-r from-transparent via-cyan-400 to-transparent blur-[1px] anim-export-scan shadow-[0_0_20px_#22d3ee]" />
+
+                  {/* High-tech Ripple Gradient Aura */}
+                  <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/15 via-transparent to-purple-600/15 backdrop-blur-[0.5px]" />
+
+                  {/* Floating CapCut / VN Export HUD Pill */}
+                  <div className="relative mt-4 mx-auto bg-black/90 backdrop-blur-md border border-indigo-500/70 rounded-full px-5 py-2 flex items-center gap-3 shadow-2xl">
+                    <span className="relative flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
+                    </span>
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">Exporting Video</span>
+                        <span className="font-mono text-xs font-extrabold text-cyan-400">{exportProgress}%</span>
+                      </div>
+                      <span className="text-[10px] text-zinc-400">Preserving full duration & original aspect ratio</span>
+                    </div>
+                  </div>
+
+                  {/* Bottom Progress Bar inside preview card */}
+                  <div className="relative mb-3 mx-6">
+                    <div className="w-full bg-zinc-900/90 rounded-full h-1.5 overflow-hidden border border-zinc-700/60 shadow-inner">
+                      <div
+                        className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-400 transition-all duration-300"
+                        style={{ width: `${exportProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div
-                className={`relative w-full flex items-center justify-center transition-all duration-300 ease-in-out ${
+                className={`relative w-full flex items-center justify-center transition-all duration-700 ease-out ${
+                  isExporting ? 'scale-[0.91] ring-2 ring-indigo-500/90 shadow-[0_0_60px_rgba(99,102,241,0.5)] rounded-2xl overflow-hidden' : ''
+                } ${
                   aspectRatio === '9:16'
                     ? 'aspect-[9/16] max-h-[500px] max-w-[282px] sm:max-w-[310px]'
                     : aspectRatio === '1:1'
@@ -1957,12 +2008,48 @@ export default function App() {
               )}
             </div>
 
-            {/* Scrollable Transcript List */}
+            {/* Real-time Loading Bar while Captions are being generated (Requirement 5) */}
+            {isTranscribing && (
+              <div className="bg-[#121214] border border-indigo-500/50 rounded-xl p-4 mb-3 flex flex-col gap-3 shadow-lg">
+                <div className="flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
+                    <span className="font-semibold text-white">Transcribing Real Audio...</span>
+                  </div>
+                  <span className="font-mono text-xs font-bold text-indigo-400">{transcribeProgress}%</span>
+                </div>
+
+                {/* Animated Gradient Loading Bar */}
+                <div className="w-full bg-zinc-800 rounded-full h-2.5 overflow-hidden border border-zinc-700/60 shadow-inner">
+                  <div
+                    className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-400 rounded-full transition-all duration-300"
+                    style={{ width: `${transcribeProgress}%` }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-zinc-400">
+                  <span className="truncate">{transcribeStatusText || 'Hugging Face Whisper Large v3'}</span>
+                  <span className="font-mono text-indigo-300 shrink-0 font-medium">{language}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Scrollable Transcript List - Display captions ONLY once complete (Requirement 5) */}
             <div
               ref={transcriptListRef}
               className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[420px] lg:max-h-[460px]"
             >
-              {captions.map((seg, idx) => {
+              {!isTranscribing && captions.length === 0 && (
+                <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500 rounded-xl border border-dashed border-zinc-800 bg-[#121214]/50 my-auto min-h-[200px]">
+                  <FileText className="w-8 h-8 text-zinc-600 mb-2 stroke-[1.5]" />
+                  <p className="text-xs font-semibold text-zinc-300">No Captions Yet</p>
+                  <p className="text-[11px] text-zinc-500 max-w-[260px] mt-1">
+                    Upload a video (up to 500MB) and click <strong className="text-indigo-400">Generate</strong> to transcribe real spoken audio with Hugging Face Whisper Large v3.
+                  </p>
+                </div>
+              )}
+
+              {!isTranscribing && captions.map((seg, idx) => {
                 const isSelected = seg.id === selectedClipId;
                 const isCurrent = currentTime >= seg.startSec && currentTime <= seg.endSec;
                 const wordCount = seg.text.trim().split(/\s+/).filter(Boolean).length;
@@ -2074,7 +2161,7 @@ export default function App() {
                 Drag & drop video here or <span className="text-indigo-400">browse</span>
               </p>
               <p className="text-[11px] text-zinc-500 mt-0.5">
-                MP4, WebM, MOV (up to 100MB)
+                MP4, WebM, MOV (up to 500MB)
               </p>
             </div>
           </div>

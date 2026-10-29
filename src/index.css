@@ -99,3 +99,26 @@ input[type="range"] {
 .anim-karaoke-jump {
   animation: captionKaraokeJump 0.24s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
+
+/* Export Animated Preview (CapCut / VN Laser Scanning Wave & Glow) */
+@keyframes exportScanWave {
+  0% {
+    top: 0%;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: 98%;
+    opacity: 0;
+  }
+}
+
+.anim-export-scan {
+  animation: exportScanWave 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+

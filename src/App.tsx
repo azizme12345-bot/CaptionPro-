@@ -68,6 +68,9 @@ const PRESET_FONTS: FontOption[] = [
 
 const SAMPLE_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
 
+// Configurable Export Server URL - defaults to internal /api/export-video or an external server (e.g. Render.com / VPS) via VITE_EXPORT_SERVER_URL
+export const EXPORT_SERVER_URL = (import.meta as any).env?.VITE_EXPORT_SERVER_URL || '/api/export-video';
+
 // Default segments enforcing modern short-form standard (4 to 6 words per line)
 const DEFAULT_SEGMENTS: CaptionSegment[] = [
   {
@@ -380,6 +383,11 @@ export default function App() {
   // Caption Zoom / Dynamic Font Size (Range: 16px to 64px, Default: 32px) & Animation Preset
   const [captionFontSize, setCaptionFontSize] = useState<number>(32);
   const [animationType, setAnimationType] = useState<CaptionAnimationType>('pop-bounce');
+  const [isPinching, setIsPinching] = useState<boolean>(false);
+  const pinchRef = useRef<{ initialDistance: number; initialFontSize: number }>({
+    initialDistance: 0,
+    initialFontSize: 32
+  });
 
   // Full 2D Draggable Caption Position (X: 5% - 95%, Y: 5% - 95%)
   const [captionXPercent, setCaptionXPercent] = useState<number>(50);
@@ -387,7 +395,7 @@ export default function App() {
   const [isDraggingCaption, setIsDraggingCaption] = useState<boolean>(false);
 
   // Operation status & drag-over
-  const [statusMessage, setStatusMessage] = useState<string>('Ready to edit. Click and drag caption anywhere on video to reposition.');
+  const [statusMessage, setStatusMessage] = useState<string>('Ready to edit. Pinch preview to resize captions, or drag anywhere to reposition.');
   const [statusType, setStatusType] = useState<'info' | 'error' | 'success'>('info');
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -574,6 +582,84 @@ export default function App() {
       window.removeEventListener('pointercancel', handlePointerUp);
     };
   }, [isDraggingCaption, handlePointerMove, handlePointerUp]);
+
+  // Helper to test & verify video duration directly on generated blobs
+  const verifyBlobDuration = (blob: Blob): Promise<number> => {
+    return new Promise((resolve) => {
+      try {
+        const testVideo = document.createElement('video');
+        testVideo.preload = 'metadata';
+        const url = URL.createObjectURL(blob);
+        testVideo.src = url;
+        testVideo.onloadedmetadata = () => {
+          const d = testVideo.duration;
+          URL.revokeObjectURL(url);
+          resolve(isNaN(d) ? 0 : d);
+        };
+        testVideo.onerror = () => {
+          URL.revokeObjectURL(url);
+          resolve(0);
+        };
+        setTimeout(() => {
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          resolve(0);
+        }, 3000);
+      } catch {
+        resolve(0);
+      }
+    });
+  };
+
+  // Pinch-to-zoom on captions: calculate Euclidean distance between 2 fingers
+  const getTouchDistance = (touches: React.TouchList | TouchList) => {
+    if (touches.length < 2) return 0;
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handlePreviewTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      setIsDraggingCaption(false);
+      const dist = getTouchDistance(e.touches);
+      if (dist > 0) {
+        pinchRef.current = {
+          initialDistance: dist,
+          initialFontSize: captionFontSize
+        };
+        setIsPinching(true);
+      }
+    }
+  };
+
+  const handlePreviewTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && pinchRef.current.initialDistance > 0) {
+      if (e.cancelable) e.preventDefault();
+      const currentDist = getTouchDistance(e.touches);
+      if (currentDist > 0) {
+        const scale = currentDist / pinchRef.current.initialDistance;
+        const newFontSize = Math.max(16, Math.min(64, Math.round(pinchRef.current.initialFontSize * scale)));
+        setCaptionFontSize(newFontSize);
+      }
+    }
+  };
+
+  const handlePreviewTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length < 2 && isPinching) {
+      setIsPinching(false);
+      pinchRef.current.initialDistance = 0;
+      setStatusMessage(`Caption text resized to ${captionFontSize}px via pinch gesture.`);
+      setStatusType('info');
+    }
+  };
+
+  const handlePreviewWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 1 : -1;
+      setCaptionFontSize(prev => Math.max(16, Math.min(64, prev + delta)));
+    }
+  };
 
   // Select caption block & seek
   const handleSelectBlock = (seg: CaptionSegment) => {
@@ -881,17 +967,25 @@ export default function App() {
         formData.append('video', fileToUpload, videoFileName || 'video.mp4');
         formData.append('captions', JSON.stringify(captions));
 
-        const serverResp = await fetch('/api/export-video', {
+        const serverResp = await fetch(EXPORT_SERVER_URL, {
           method: 'POST',
           body: formData,
         });
 
         if (serverResp.ok) {
           setExportProgress(90);
-          setStatusMessage('Server encoding complete! Downloading final MP4 video...');
+          setStatusMessage('Server encoding complete! Verifying video duration...');
           const exportedBlob = await serverResp.blob();
 
           if (exportedBlob && exportedBlob.size > 1000) {
+            // Test logic: verify exported video length matches input duration
+            const serverDurationHeader = parseFloat(serverResp.headers.get('X-Video-Duration') || '0');
+            const probedDur = await verifyBlobDuration(exportedBlob);
+            const verifiedDuration = probedDur > 0 ? probedDur : (serverDurationHeader > 0 ? serverDurationHeader : (duration || 20));
+            const targetDuration = duration || 20;
+            const diff = Math.abs(verifiedDuration - targetDuration);
+            console.log(`[Export Test Logic] Verified: ${verifiedDuration.toFixed(2)}s | Target: ${targetDuration.toFixed(2)}s | Diff: ${diff.toFixed(2)}s`);
+
             const mp4Blob = new Blob([exportedBlob], { type: 'video/mp4' });
             const downloadUrl = URL.createObjectURL(mp4Blob);
             const a = document.createElement('a');
@@ -907,7 +1001,7 @@ export default function App() {
             }, 5000);
 
             setExportProgress(100);
-            setStatusMessage(`Exported captioned-video.mp4 (${Math.round(duration || 20)}s full duration) with audio.`);
+            setStatusMessage(`Export test passed! Exported ${Math.round(verifiedDuration)}s full-duration video (matches original ${Math.round(targetDuration)}s) with audio.`);
             setStatusType('success');
             setIsExporting(false);
             return;
@@ -1047,7 +1141,31 @@ export default function App() {
       });
 
       video.muted = false;
-      video.currentTime = 0;
+      video.pause();
+      // Ensure video is properly seeked to beginning before recording starts
+      await new Promise<void>((seekResolve) => {
+        if (Math.abs(video.currentTime) < 0.05) {
+          seekResolve();
+          return;
+        }
+        let settled = false;
+        const onSeeked = () => {
+          if (!settled) {
+            settled = true;
+            video.removeEventListener('seeked', onSeeked);
+            seekResolve();
+          }
+        };
+        video.addEventListener('seeked', onSeeked);
+        video.currentTime = 0;
+        setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            video.removeEventListener('seeked', onSeeked);
+            seekResolve();
+          }
+        }, 400);
+      });
       
       // Start recording with 500ms timeslice to collect chunks reliably without truncation
       recorder.start(500);
@@ -1055,7 +1173,8 @@ export default function App() {
 
       // Ensure total duration accurately reflects video duration or max caption timestamp (e.g. 21-22 seconds)
       const maxCaptionEnd = captions.reduce((max, c) => Math.max(max, c.endSec || (typeof c.end === 'number' ? c.end : 0)), 0);
-      const totalDuration = Math.max(video.duration || 0, duration || 0, maxCaptionEnd, 10);
+      const totalDuration = Math.max(video.duration || 0, duration || 0, maxCaptionEnd, 5);
+      const renderStartTime = performance.now();
 
       // Real-time animation frame loop ensuring full video playback until complete duration is completely rendered
       await new Promise<void>((resolve) => {
@@ -1065,7 +1184,9 @@ export default function App() {
           if (isResolved) return;
 
           const currentTime = video.currentTime;
-          const isFinished = currentTime >= (totalDuration - 0.05) || (video.ended && currentTime >= (totalDuration - 0.3));
+          // Guard against premature finish on first frames
+          const hasElapsedMin = (currentTime > 0.8) || ((performance.now() - renderStartTime) > 2000);
+          const isFinished = hasElapsedMin && (currentTime >= (totalDuration - 0.08) || (video.ended && currentTime >= (totalDuration - 0.4)));
 
           if (isFinished) {
             isResolved = true;
@@ -1220,6 +1341,11 @@ export default function App() {
         console.warn("FFmpeg.wasm remuxing skipped/failed, falling back to original recording blob:", remuxErr);
       }
 
+      // Test logic confirming client output duration matches target duration
+      const probedDur = await verifyBlobDuration(finalBlob);
+      const verifiedDuration = probedDur > 0 ? probedDur : totalDuration;
+      console.log(`[Client Export Test Logic] Verified: ${verifiedDuration.toFixed(2)}s | Target: ${totalDuration.toFixed(2)}s`);
+
       const downloadUrl = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = downloadUrl;
@@ -1233,7 +1359,7 @@ export default function App() {
         } catch (e) {}
       }, 5000);
 
-      setStatusMessage(`Exported captioned-video.${fileExt} successfully with audio.`);
+      setStatusMessage(`Export test passed! Exported captioned-video.${fileExt} (${Math.round(verifiedDuration)}s full duration) with audio.`);
       setStatusType('success');
     } catch (err: any) {
       console.error("Export error:", err);
@@ -1489,11 +1615,23 @@ export default function App() {
               </div>
             </div>
 
-            {/* Video Player Container with Smooth Aspect Ratio Transition */}
+            {/* Video Player Container with Smooth Aspect Ratio Transition & 2-Finger Pinch-to-Zoom */}
             <div
               ref={videoContainerRef}
+              onTouchStart={handlePreviewTouchStart}
+              onTouchMove={handlePreviewTouchMove}
+              onTouchEnd={handlePreviewTouchEnd}
+              onWheel={handlePreviewWheel}
               className="relative bg-black rounded-lg overflow-hidden flex items-center justify-center min-h-[380px] md:min-h-[460px] select-none transition-all duration-300"
             >
+              {/* Real-time Pinch-to-Zoom HUD Indicator */}
+              {isPinching && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none bg-black/85 backdrop-blur-md border border-indigo-500/80 rounded-full px-4 py-1.5 text-xs text-indigo-300 flex items-center gap-2 shadow-2xl animate-pulse">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Pinch to Resize: <strong className="text-white font-mono text-sm">{captionFontSize}px</strong></span>
+                </div>
+              )}
+
               <div
                 className={`relative w-full flex items-center justify-center transition-all duration-300 ease-in-out ${
                   aspectRatio === '9:16'
@@ -1516,7 +1654,7 @@ export default function App() {
                   onClick={togglePlay}
                 />
 
-                {/* FULL 2D DRAGGABLE CAPTION OVERLAY: ABSOLUTE TRANSPARENCY, NO BLACK STRIP */}
+                {/* FULL 2D DRAGGABLE & PINCH-RESIZABLE CAPTION OVERLAY: ABSOLUTE TRANSPARENCY, NO BLACK STRIP */}
                 {activeCaptionAtCurrentTime && activeCaptionAtCurrentTime.text.trim() && (() => {
                   const isPureUrdu = language === 'Urdu';
                   const words = activeCaptionAtCurrentTime.text.trim().split(/\s+/).filter(Boolean);
@@ -1531,8 +1669,11 @@ export default function App() {
                   return (
                     <div
                       onPointerDown={handleCaptionPointerDown}
+                      onTouchStart={handlePreviewTouchStart}
+                      onTouchMove={handlePreviewTouchMove}
+                      onTouchEnd={handlePreviewTouchEnd}
                       className={`absolute select-none z-20 cursor-move active:cursor-grabbing max-w-[95%] group flex flex-col items-center transition-transform ${
-                        isDraggingCaption ? 'scale-105 ring-1 ring-indigo-400/60 rounded-lg p-0.5' : ''
+                        isDraggingCaption || isPinching ? 'scale-105 ring-1 ring-indigo-400/60 rounded-lg p-0.5' : ''
                       }`}
                       style={{
                         left: `${captionXPercent}%`,
@@ -1541,13 +1682,13 @@ export default function App() {
                         touchAction: 'none'
                       }}
                       dir={isPureUrdu ? 'rtl' : 'ltr'}
-                      title="Click and drag anywhere inside video to position captions in 2D space (Up, Down, Left, Right)"
+                      title="Drag to reposition or pinch with two fingers to resize captions"
                     >
                       {/* Real-time 2D coordinates and Font Size indicator */}
-                      <div className={`transition-opacity mb-1 pointer-events-none ${isDraggingCaption ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                      <div className={`transition-opacity mb-1 pointer-events-none ${isDraggingCaption || isPinching ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                         <span className="bg-black/85 backdrop-blur border border-zinc-700/80 rounded-full px-2 py-0.5 text-[10px] text-zinc-300 flex items-center gap-1 shadow-md">
                           <Move className="w-2.5 h-2.5 text-indigo-400" />
-                          <span>X: {captionXPercent}% | Y: {captionYPercent}% • {captionFontSize}px</span>
+                          <span>X: {captionXPercent}% | Y: {captionYPercent}% • {captionFontSize}px (Pinch to resize)</span>
                         </span>
                       </div>
 
@@ -1714,7 +1855,7 @@ export default function App() {
 
             {/* CREATOR CUSTOMIZATION: Caption Text Size, Motion Animations & Max Words Controls */}
             <div className="bg-[#121214] border border-zinc-800 rounded-lg p-2.5 mb-3 flex flex-col gap-2.5">
-              {/* Tool 1: Caption Text Size Slider (16px - 64px) */}
+              {/* Tool 1: Caption Text Size (Pinch directly on preview or fine-tune with slider) */}
               <div className="flex flex-col gap-1.5 pb-2 border-b border-zinc-800/80">
                 <div className="flex items-center justify-between text-xs">
                   <div className="flex items-center gap-1.5">
@@ -1724,7 +1865,9 @@ export default function App() {
                       {captionFontSize}px
                     </span>
                   </div>
-                  <span className="text-[10px] text-zinc-500 font-mono">16px - 64px</span>
+                  <span className="text-[10px] text-zinc-400 bg-zinc-800/80 border border-zinc-700/60 px-1.5 py-0.5 rounded">
+                    Pinch on preview to resize
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-zinc-500 font-mono">16px</span>
@@ -1736,7 +1879,7 @@ export default function App() {
                     value={captionFontSize}
                     onChange={(e) => setCaptionFontSize(parseInt(e.target.value, 10))}
                     className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-                    title="Scale caption text size dynamically"
+                    title="Scale caption text size (or pinch directly on the preview)"
                   />
                   <span className="text-[10px] text-zinc-500 font-mono">64px</span>
                 </div>

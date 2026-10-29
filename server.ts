@@ -638,10 +638,47 @@ Input Media File: [Process the audio track normally and output the standard JSON
         throw new Error('Exported video file was not generated or is empty');
       }
 
+      // Test logic to confirm output length matches input length
+      let inputDuration = 0;
+      let outputDuration = 0;
+      try {
+        await new Promise((resProbe) => {
+          ffmpeg.ffprobe(inputPath, (err, metadata) => {
+            if (!err && metadata?.format?.duration) {
+              inputDuration = parseFloat(metadata.format.duration.toString()) || 0;
+            }
+            resProbe(true);
+          });
+        });
+
+        await new Promise((resProbe) => {
+          ffmpeg.ffprobe(outputPath, (err, metadata) => {
+            if (!err && metadata?.format?.duration) {
+              outputDuration = parseFloat(metadata.format.duration.toString()) || 0;
+            }
+            resProbe(true);
+          });
+        });
+
+        console.log(`[Export Duration Verification] Input: ${inputDuration.toFixed(2)}s | Output: ${outputDuration.toFixed(2)}s`);
+        if (inputDuration > 0 && outputDuration > 0) {
+          const diff = Math.abs(outputDuration - inputDuration);
+          if (diff <= 1.0) {
+            console.log(`[Export Test PASSED] Output length accurately matches input duration.`);
+          } else {
+            console.warn(`[Export Test Notice] Duration difference: ${diff.toFixed(2)}s`);
+          }
+        }
+      } catch (probeErr) {
+        console.warn("Probe test notice:", probeErr);
+      }
+
       const fileStats = fs.statSync(outputPath);
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Content-Length', fileStats.size);
       res.setHeader('Content-Disposition', 'attachment; filename="captionpro-export.mp4"');
+      if (outputDuration > 0) res.setHeader('X-Video-Duration', outputDuration.toFixed(2));
+      if (inputDuration > 0) res.setHeader('X-Input-Duration', inputDuration.toFixed(2));
 
       const fileStream = fs.createReadStream(outputPath);
       fileStream.pipe(res);

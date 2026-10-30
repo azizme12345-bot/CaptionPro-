@@ -418,7 +418,7 @@ export default function App() {
   const [maxWordsPerLine, setMaxWordsPerLine] = useState<number>(5);
 
   // Caption Styling state (Matching Caption Free options)
-  const [captionFontSize, setCaptionFontSize] = useState<number>(25);
+  const [captionFontSize, setCaptionFontSize] = useState<number>(32);
   const [captionStyle, setCaptionStyle] = useState<string>('Bold Clean');
   const [captionColor, setCaptionColor] = useState<string>('#ffffff');
   const [captionPosition, setCaptionPosition] = useState<string>('Bottom');
@@ -578,17 +578,10 @@ export default function App() {
     setHasMedia(true);
     navigateTo('editor');
 
-    // Preload video to extract duration and auto-detect aspect ratio accurately
+    // Preload video to extract duration accurately (preserve default 9:16 ratio)
     const probeVid = document.createElement('video');
     probeVid.preload = 'metadata';
     probeVid.onloadedmetadata = () => {
-      if (probeVid.videoWidth && probeVid.videoHeight) {
-        const ratio = probeVid.videoWidth / probeVid.videoHeight;
-        if (ratio < 0.75) setAspectRatio('9:16');
-        else if (ratio < 1.15) setAspectRatio('1:1');
-        else if (ratio < 1.5) setAspectRatio('4:3');
-        else setAspectRatio('16:9');
-      }
       if (probeVid.duration && isFinite(probeVid.duration) && probeVid.duration > 0) {
         setDuration(probeVid.duration);
       }
@@ -1856,15 +1849,6 @@ export default function App() {
                   <p className="text-xs text-[#a1a1aa] leading-relaxed">Pick fonts, animations, and positions, then export the full video duration with audio.</p>
                 </div>
               </div>
-              <div className="mt-7 text-center">
-                <button
-                  onClick={() => navigateTo('editor')}
-                  className="bg-[#10b981] hover:bg-[#059669] text-black font-bold px-6 py-3 rounded-lg text-sm transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] inline-flex items-center gap-2 cursor-pointer"
-                >
-                  <Film className="w-4 h-4" />
-                  <span>Launch Editor Now</span>
-                </button>
-              </div>
             </div>
           </section>
         )}
@@ -1926,14 +1910,53 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Video Container */}
-                <div
-                  ref={videoContainerRef}
-                  onTouchStart={handlePreviewTouchStart}
-                  onTouchMove={handlePreviewTouchMove}
-                  onTouchEnd={handlePreviewTouchEnd}
-                  className="relative w-full aspect-[9/16] max-h-[520px] bg-[#050505] rounded-lg border border-[#1f1f23] overflow-hidden flex items-center justify-center group select-none"
-                >
+                {/* Video Ratio / Frame Selector (Change 5: 9:16 | 16:9 | 1:1 | 3:4 | 4:3) */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 bg-[#050507] rounded-xl border border-[#1f1f23]">
+                  <span className="text-xs font-semibold text-[#a1a1aa] flex items-center gap-1.5 pl-0.5">
+                    <Square className="w-3.5 h-3.5 text-[#10b981]" />
+                    <span>Frame Ratio:</span>
+                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {(['9:16', '16:9', '1:1', '3:4', '4:3'] as AspectRatio[]).map((ratio) => (
+                      <button
+                        key={ratio}
+                        type="button"
+                        onClick={() => {
+                          setAspectRatio(ratio);
+                          setStatusMessage(`Frame ratio set to ${ratio}.`);
+                          setStatusType('info');
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-mono font-bold transition-all cursor-pointer border ${
+                          aspectRatio === ratio
+                            ? 'bg-[#10b981] text-black border-[#10b981] shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                            : 'bg-[#000000] text-[#a1a1aa] border-[#1f1f23] hover:text-white hover:border-[#10b981]/50'
+                        }`}
+                      >
+                        {ratio}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Video Container Frame */}
+                <div className="w-full flex justify-center items-center py-1">
+                  <div
+                    ref={videoContainerRef}
+                    onTouchStart={handlePreviewTouchStart}
+                    onTouchMove={handlePreviewTouchMove}
+                    onTouchEnd={handlePreviewTouchEnd}
+                    className={`relative w-full ${
+                      aspectRatio === '9:16'
+                        ? 'aspect-[9/16] max-w-[320px] max-h-[520px]'
+                        : aspectRatio === '16:9'
+                        ? 'aspect-[16/9] max-w-[560px] max-h-[360px]'
+                        : aspectRatio === '1:1'
+                        ? 'aspect-square max-w-[420px] max-h-[420px]'
+                        : aspectRatio === '3:4'
+                        ? 'aspect-[3/4] max-w-[360px] max-h-[480px]'
+                        : 'aspect-[4/3] max-w-[480px] max-h-[380px]'
+                    } bg-[#050505] rounded-xl border border-[#1f1f23] overflow-hidden flex items-center justify-center group select-none transition-all duration-300 shadow-xl`}
+                  >
                   <video
                     ref={videoRef}
                     src={videoSrc}
@@ -2059,6 +2082,7 @@ export default function App() {
                       </div>
                     );
                   })}
+                  </div>
                 </div>
 
                 <p className="text-[12px] text-[#a1a1aa] mt-1 flex items-center justify-between" id="media-name">
@@ -2243,14 +2267,14 @@ export default function App() {
                       </select>
                     </div>
 
-                    {/* Words Per Line Chunking */}
+                    {/* Words Per Line Chunking (Change 2: 1 to 10 in a single horizontal row) */}
                     <div className="flex flex-col gap-2">
                       <div className="flex justify-between items-center">
-                        <label className="text-[13px] font-[600] text-[#a1a1aa]">Words Per Line Chunk</label>
-                        <span className="text-xs text-[#10b981] font-mono font-bold">{maxWordsPerLine} words</span>
+                        <label className="text-[13px] font-[600] text-[#a1a1aa]">Words Per Line</label>
+                        <span className="text-xs text-[#10b981] font-mono font-bold">{maxWordsPerLine} {maxWordsPerLine === 1 ? 'word' : 'words'}</span>
                       </div>
-                      <div className="grid grid-cols-4 gap-2">
-                        {[1, 2, 3, 5].map((count) => (
+                      <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((count) => (
                           <button
                             key={count}
                             type="button"
@@ -2260,16 +2284,86 @@ export default function App() {
                                 setCaptions(prev => splitIntoWordChunks(prev, count));
                               }
                             }}
-                            className={`py-2 px-3 rounded-lg text-xs font-mono font-bold transition-all border cursor-pointer ${
+                            className={`flex-1 min-w-[28px] h-8 rounded-lg text-xs font-mono font-bold transition-all border cursor-pointer flex items-center justify-center shrink-0 ${
                               maxWordsPerLine === count
-                                ? 'bg-[#10b981]/20 border-[#10b981] text-[#10b981]'
-                                : 'bg-[#000000] border-[#1f1f23] text-[#a1a1aa] hover:text-white'
+                                ? 'bg-[#10b981] text-black border-[#10b981] shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                                : 'bg-[#000000] border-[#1f1f23] text-[#a1a1aa] hover:text-white hover:border-[#10b981]/50'
                             }`}
                           >
-                            {count} {count === 1 ? 'Word' : 'Words'}
+                            {count}
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    {/* Feature 1: Caption Color Picker */}
+                    <div className="flex flex-col gap-2">
+                      <label htmlFor="caption-color" className="text-[13px] font-[600] text-[#a1a1aa]">Caption Color</label>
+                      <div className="flex items-center gap-3">
+                        <input
+                          id="caption-color"
+                          type="color"
+                          value={captionColor}
+                          onChange={(e) => setCaptionColor(e.target.value)}
+                          className="w-12 h-10 bg-[#000000] border border-[#1f1f23] p-1 rounded-lg cursor-pointer"
+                        />
+                        <span className="font-mono text-xs text-[#a1a1aa] uppercase">{captionColor}</span>
+                      </div>
+                    </div>
+
+                    {/* Feature 2: Caption Position (Top, Middle, Bottom) */}
+                    <div className="flex flex-col gap-2">
+                      <label className="text-[13px] font-[600] text-[#a1a1aa]">Caption Position</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['Top', 'Middle', 'Bottom'] as const).map((pos) => (
+                          <button
+                            key={pos}
+                            type="button"
+                            onClick={() => {
+                              if (pos === 'Top') {
+                                setCaptionPosition('Top');
+                                setCaptionYPercent(15);
+                                setCaptionXPercent(50);
+                              } else if (pos === 'Middle') {
+                                setCaptionPosition('Center');
+                                setCaptionYPercent(50);
+                                setCaptionXPercent(50);
+                              } else {
+                                setCaptionPosition('Bottom');
+                                setCaptionYPercent(80);
+                                setCaptionXPercent(50);
+                              }
+                            }}
+                            className={`py-2 px-3 rounded-lg text-xs font-bold transition-all border cursor-pointer ${
+                              (pos === 'Top' && captionYPercent < 30) ||
+                              (pos === 'Middle' && captionYPercent >= 30 && captionYPercent <= 65) ||
+                              (pos === 'Bottom' && captionYPercent > 65)
+                                ? 'bg-[#10b981] text-black border-[#10b981] shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                                : 'bg-[#000000] text-[#a1a1aa] border-[#1f1f23] hover:text-white hover:border-[#10b981]/50'
+                            }`}
+                          >
+                            {pos}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Feature 3: Font Size Slider (Range 12 to 72, default 32) */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex justify-between items-center">
+                        <label htmlFor="font-size" className="text-[13px] font-[600] text-[#a1a1aa]">Font Size</label>
+                        <span className="text-xs text-[#10b981] font-mono font-bold">{captionFontSize}px</span>
+                      </div>
+                      <input
+                        id="font-size"
+                        type="range"
+                        min={12}
+                        max={72}
+                        step={1}
+                        value={captionFontSize}
+                        onChange={(e) => setCaptionFontSize(parseInt(e.target.value, 10))}
+                        className="w-full h-2 bg-[#000000] border border-[#1f1f23] rounded-lg appearance-none cursor-pointer accent-[#10b981]"
+                      />
                     </div>
 
                     {/* Generate Captions Primary Trigger */}
@@ -2631,52 +2725,15 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Common Action Buttons (Always Available) */}
-                <div className="flex flex-wrap gap-2.5 mt-2 pt-3 border-t border-[#1f1f23]">
-                  <button
-                    type="button"
-                    onClick={handleExportBurnedVideo}
-                    disabled={isExporting}
-                    className="flex-1 bg-[#10b981] hover:bg-[#059669] text-black font-[700] py-3.5 px-5 rounded-lg text-[15px] cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
-                  >
-                    {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                    <span>{isExporting ? `Exporting (${exportProgress}%)` : 'Export Video with Subtitles'}</span>
-                  </button>
-
+                {/* Action Buttons (Change 4: Bottom export removed, top nav has the only Export button. Change 3: SRT/VTT/Copy removed) */}
+                <div className="mt-2 pt-3 border-t border-[#1f1f23]">
                   <button
                     type="button"
                     onClick={resetStudio}
-                    className="bg-[#151519] hover:bg-red-950/40 text-white font-[600] border border-[#1f1f23] hover:border-red-800 py-3 px-4 rounded-lg text-[14px] cursor-pointer transition-colors"
+                    className="w-full bg-[#151519] hover:bg-red-950/40 text-zinc-300 hover:text-white font-[600] border border-[#1f1f23] hover:border-red-800 py-3 px-4 rounded-lg text-sm cursor-pointer transition-colors flex items-center justify-center gap-2"
                   >
-                    Remove Media
-                  </button>
-                </div>
-
-                {/* Subtitle File Exports & Copy */}
-                <div className="flex items-center gap-2 pt-2 border-t border-[#1f1f23]">
-                  <button
-                    type="button"
-                    onClick={() => handleExportSubtitleFile('srt')}
-                    className="flex-1 bg-[#151519] hover:bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-xs py-2 px-2 rounded-lg font-medium border border-[#1f1f23] flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[#10b981]" />
-                    <span>.SRT</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleExportSubtitleFile('vtt')}
-                    className="flex-1 bg-[#151519] hover:bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-xs py-2 px-2 rounded-lg font-medium border border-[#1f1f23] flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[#10b981]" />
-                    <span>.VTT</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCopyCaptions}
-                    className="bg-[#151519] hover:bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-xs py-2 px-3 rounded-lg font-medium border border-[#1f1f23] flex items-center gap-1 cursor-pointer"
-                  >
-                    {copySuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copySuccess ? 'Copied' : 'Copy'}</span>
+                    <RotateCcw className="w-4 h-4 text-red-400" />
+                    <span>Remove Media</span>
                   </button>
                 </div>
 

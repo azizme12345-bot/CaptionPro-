@@ -31,7 +31,9 @@ import {
   FolderUp,
   Languages,
   RotateCcw,
-  Zap
+  Zap,
+  HelpCircle,
+  Film
 } from 'lucide-react';
 
 export type AspectRatio = '9:16' | '1:1' | '3:4' | '4:3' | '16:9';
@@ -73,13 +75,13 @@ export const EXPORT_SERVER_URL = (import.meta as any).env?.VITE_EXPORT_SERVER_UR
 
 const SUPPORTED_LANGUAGES = [
   'English',
-  'Roman Urdu',
   'Urdu',
+  'Roman Urdu',
+  'Arabic',
   'Hindi',
   'Spanish',
   'French',
   'German',
-  'Arabic',
   'Portuguese',
   'Japanese',
   'Italian',
@@ -185,80 +187,6 @@ function splitIntoWordChunks(segments: CaptionSegment[], maxWords: number): Capt
   }
 
   return result.sort((a, b) => a.startSec - b.startSec);
-}
-
-// Fallback generator for high reliability during network disconnects or iframe fetch limits
-function generateFallbackCaptions(language: string, durationSec: number): CaptionSegment[] {
-  const templates: Record<string, string[]> = {
-    'Roman Urdu / Urdu (Likhne Type)': [
-      'Zameen par naya aagaz karein.',
-      'Har lafz ko wazeh rakhein.',
-      'Nazil hone wali barkat dekhein.',
-      'Behtareen video viral banayein.',
-      'Apni awaz ko pehchan lein.',
-      'Mukammal khuloos ke sath shuru karein.'
-    ],
-    'Roman Urdu': [
-      'Zameen par naya aagaz karein.',
-      'Har lafz ko wazeh rakhein.',
-      'Nazil hone wali barkat dekhein.',
-      'Behtareen video viral banayein.',
-      'Apni awaz ko pehchan lein.'
-    ],
-    Urdu: [
-      'اپنی ویڈیو کو بہترین بنائیں۔',
-      'ہر لفظ کو واضح رکھیں۔',
-      'شارٹس پر مکمل توجہ لیں۔',
-      'نئے ناظرین کو متوجہ کریں۔',
-      'اپنی آواز کو دنیا تک پہنچائیں۔'
-    ],
-    Hindi: [
-      'Har shabd ko prabhavi banayein.',
-      'Apna sandesh spasht rakhein.',
-      'Darshakon ka dhyan aakarshit karein.',
-      'Apne video ko viral banayein.'
-    ],
-    Spanish: [
-      'Haz que cada palabra cuente.',
-      'Comunica con total claridad.',
-      'Capta la atención al instante.',
-      'Convierte espectadores en seguidores.'
-    ],
-    English: [
-      'Make every single word count.',
-      'Deliver your message with clarity.',
-      'Capture attention instantly and clearly.',
-      'Turn casual viewers into followers.',
-      'Keep your audience fully engaged.',
-      'Share your voice with confidence.'
-    ]
-  };
-
-  const isPureUrdu = language === 'Urdu';
-  const isRomanUrdu = language === 'Roman Urdu' || language === 'Roman Urdu / Urdu (Likhne Type)';
-
-  let lines: string[];
-  if (isPureUrdu) {
-    lines = templates['Urdu'];
-  } else if (isRomanUrdu) {
-    lines = templates['Roman Urdu'];
-  } else {
-    lines = templates[language] || templates.English;
-  }
-  const safeDur = Math.max(6, durationSec || 15);
-  const step = Math.max(2, Math.floor(safeDur / lines.length));
-  return lines.map((text, idx) => {
-    const startSec = idx * step;
-    const endSec = Math.min(safeDur, (idx + 1) * step);
-    return {
-      id: `seg-${Date.now()}-${idx}`,
-      start: formatSecondsToTime(startSec),
-      end: formatSecondsToTime(endSec),
-      startSec,
-      endSec,
-      text
-    };
-  });
 }
 
 // Extract audio from video file into compact mono WAV base64 string
@@ -403,49 +331,53 @@ async function getExactVideoDuration(videoEl: HTMLVideoElement): Promise<number>
 }
 
 export default function App() {
-  // Video state
-  const [videoSrc, setVideoSrc] = useState<string>(SAMPLE_VIDEO_URL);
+  // Media state
+  const [videoSrc, setVideoSrc] = useState<string>('');
   const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [videoFileName, setVideoFileName] = useState<string>('ForBiggerBlazes.mp4');
+  const [videoFileName, setVideoFileName] = useState<string>('');
+  const [hasMedia, setHasMedia] = useState<boolean>(false);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(15);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('9:16');
 
-  // Captions state & chunking limit (strictly real audio from Hugging Face Whisper - no sample/demo captions)
+  // Captions state
   const [captions, setCaptions] = useState<CaptionSegment[]>([]);
   const [selectedClipId, setSelectedClipId] = useState<string>('');
   const [language, setLanguage] = useState<string>('English');
   const [maxWordsPerLine, setMaxWordsPerLine] = useState<number>(5);
 
-  // Transcription loading progress & status
-  const [transcribeProgress, setTranscribeProgress] = useState<number>(0);
-  const [transcribeStatusText, setTranscribeStatusText] = useState<string>('');
+  // Caption Styling state (Matching Caption Free options)
+  const [captionFontSize, setCaptionFontSize] = useState<number>(25);
+  const [captionStyle, setCaptionStyle] = useState<string>('Bold Clean');
+  const [captionColor, setCaptionColor] = useState<string>('#ffffff');
+  const [captionPosition, setCaptionPosition] = useState<string>('Bottom');
+  const [animationType, setAnimationType] = useState<CaptionAnimationType>('pop-bounce');
 
-  // Typography & Custom Font State
+  // Typography & Custom Fonts
   const [selectedFont, setSelectedFont] = useState<string>('Plus Jakarta Sans');
   const [customFonts, setCustomFonts] = useState<FontOption[]>([]);
   const [isFontDropdownOpen, setIsFontDropdownOpen] = useState<boolean>(false);
 
-  // Caption Zoom / Dynamic Font Size (Range: 16px to 64px, Default: 32px) & Animation Preset
-  const [captionFontSize, setCaptionFontSize] = useState<number>(32);
-  const [animationType, setAnimationType] = useState<CaptionAnimationType>('pop-bounce');
+  // Pinch-to-zoom state
   const [isPinching, setIsPinching] = useState<boolean>(false);
   const pinchRef = useRef<{ initialDistance: number; initialFontSize: number }>({
     initialDistance: 0,
-    initialFontSize: 32
+    initialFontSize: 25
   });
 
-  // Full 2D Draggable Caption Position (X: 5% - 95%, Y: 5% - 95%)
+  // 2D Draggable Position
   const [captionXPercent, setCaptionXPercent] = useState<number>(50);
   const [captionYPercent, setCaptionYPercent] = useState<number>(80);
   const [isDraggingCaption, setIsDraggingCaption] = useState<boolean>(false);
 
-  // Operation status & drag-over
-  const [statusMessage, setStatusMessage] = useState<string>('Upload a video (up to 500MB) to transcribe real audio with Hugging Face Whisper Large v3.');
+  // Operation status & loading
+  const [statusMessage, setStatusMessage] = useState<string>('Import a media file to start configuring your AI captions.');
   const [statusType, setStatusType] = useState<'info' | 'error' | 'success'>('info');
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
+  const [transcribeProgress, setTranscribeProgress] = useState<number>(0);
+  const [transcribeStatusText, setTranscribeStatusText] = useState<string>('');
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [exportProgress, setExportProgress] = useState<number>(0);
   const [copySuccess, setCopySuccess] = useState<boolean>(false);
@@ -458,30 +390,20 @@ export default function App() {
   const fontDropdownRef = useRef<HTMLDivElement | null>(null);
   const transcriptListRef = useRef<HTMLDivElement | null>(null);
 
-  // Close font dropdown on click outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (fontDropdownRef.current && !fontDropdownRef.current.contains(event.target as Node)) {
-        setIsFontDropdownOpen(false);
-      }
-    }
-    if (isFontDropdownOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [isFontDropdownOpen]);
-
   // Active font computation
   const allFonts = [...PRESET_FONTS, ...customFonts];
   const activeFontObj = allFonts.find(f => f.name === selectedFont) || PRESET_FONTS[0];
   const activeFontFamily = activeFontObj.family;
 
-  // Active caption strictly synchronized with playback time
+  // Active caption at current playback time
   const activeCaptionAtCurrentTime = captions.find(
     c => currentTime >= c.startSec && currentTime <= c.endSec
   );
+
+  // Trigger file selection
+  const triggerImport = () => {
+    fileInputRef.current?.click();
+  };
 
   // Video playback controls
   const togglePlay = async () => {
@@ -496,7 +418,7 @@ export default function App() {
         setIsPlaying(false);
       }
     } catch {
-      setStatusMessage('Playback prevented by browser policy. Click to play.');
+      setStatusMessage('Playback prevented by browser policy. Click video to play.');
       setStatusType('info');
     }
   };
@@ -516,16 +438,16 @@ export default function App() {
     }
   };
 
-  // Video selection / drag & drop handler (Supports videos up to 500MB)
+  // Media upload handler
   const processUploadedFile = (file: File) => {
-    if (!file.type.startsWith('video/') && !file.name.match(/\.(mp4|webm|mov|mkv)$/i)) {
-      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 500MB.');
+    if (!file.type.startsWith('video/') && !file.type.startsWith('audio/') && !file.name.match(/\.(mp4|webm|mov|mkv|mp3|wav|m4a)$/i)) {
+      setStatusMessage('Import Failed: Please choose a valid video or audio file (MP4, WebM, MOV) under 500MB.');
       setStatusType('error');
       return;
     }
 
     if (file.size > 500 * 1024 * 1024) {
-      setStatusMessage('Video Import Failed. Please ensure the file is a valid MP4/WebM under 500MB.');
+      setStatusMessage('File Too Large: Please upload a media file under 500MB.');
       setStatusType('error');
       return;
     }
@@ -534,14 +456,56 @@ export default function App() {
     setVideoFile(file);
     setVideoFileName(file.name);
     setVideoSrc(url);
-    setStatusMessage(`Loaded: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB). Click "Generate Captions" to transcribe with Whisper Large v3.`);
+    setHasMedia(true);
+    setStatusMessage(`Loaded: ${file.name} (${(file.size / (1024 * 1024)).toFixed(1)} MB). Click "Generate Captions" to transcribe with AI.`);
     setStatusType('success');
+
+    setTimeout(() => {
+      document.getElementById('main-studio-workspace')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       processUploadedFile(file);
+    }
+  };
+
+  // Reset Studio View (Remove Media)
+  const resetStudio = () => {
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    }
+    if (videoSrc && videoSrc.startsWith('blob:')) {
+      URL.revokeObjectURL(videoSrc);
+    }
+    setVideoFile(null);
+    setVideoSrc('');
+    setVideoFileName('');
+    setCaptions([]);
+    setHasMedia(false);
+    setIsPlaying(false);
+    setStatusMessage('Media removed. Select "Import Media" to upload a video.');
+    setStatusType('info');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Position change handler (Bottom, Center, Top)
+  const handlePositionChange = (pos: string) => {
+    setCaptionPosition(pos);
+    if (pos === 'Top') {
+      setCaptionYPercent(10);
+      setCaptionXPercent(50);
+    } else if (pos === 'Center') {
+      setCaptionYPercent(45);
+      setCaptionXPercent(50);
+    } else {
+      setCaptionYPercent(80);
+      setCaptionXPercent(50);
     }
   };
 
@@ -589,7 +553,7 @@ export default function App() {
     }
   };
 
-  // Full 2D Dragging Logic for Caption Positioning anywhere in preview
+  // 2D Dragging Logic for Caption Positioning
   const handleCaptionPointerDown = (e: React.PointerEvent) => {
     e.stopPropagation();
     e.preventDefault();
@@ -631,34 +595,7 @@ export default function App() {
     };
   }, [isDraggingCaption, handlePointerMove, handlePointerUp]);
 
-  // Helper to test & verify video duration directly on generated blobs
-  const verifyBlobDuration = (blob: Blob): Promise<number> => {
-    return new Promise((resolve) => {
-      try {
-        const testVideo = document.createElement('video');
-        testVideo.preload = 'metadata';
-        const url = URL.createObjectURL(blob);
-        testVideo.src = url;
-        testVideo.onloadedmetadata = () => {
-          const d = testVideo.duration;
-          URL.revokeObjectURL(url);
-          resolve(isNaN(d) ? 0 : d);
-        };
-        testVideo.onerror = () => {
-          URL.revokeObjectURL(url);
-          resolve(0);
-        };
-        setTimeout(() => {
-          try { URL.revokeObjectURL(url); } catch (e) {}
-          resolve(0);
-        }, 3000);
-      } catch {
-        resolve(0);
-      }
-    });
-  };
-
-  // Pinch-to-zoom on captions: calculate Euclidean distance between 2 fingers
+  // Pinch-to-zoom on captions
   const getTouchDistance = (touches: React.TouchList | TouchList) => {
     if (touches.length < 2) return 0;
     const dx = touches[0].clientX - touches[1].clientX;
@@ -686,7 +623,7 @@ export default function App() {
       const currentDist = getTouchDistance(e.touches);
       if (currentDist > 0) {
         const scale = currentDist / pinchRef.current.initialDistance;
-        const newFontSize = Math.max(16, Math.min(64, Math.round(pinchRef.current.initialFontSize * scale)));
+        const newFontSize = Math.max(10, Math.min(80, Math.round(pinchRef.current.initialFontSize * scale)));
         setCaptionFontSize(newFontSize);
       }
     }
@@ -698,14 +635,6 @@ export default function App() {
       pinchRef.current.initialDistance = 0;
       setStatusMessage(`Caption text resized to ${captionFontSize}px via pinch gesture.`);
       setStatusType('info');
-    }
-  };
-
-  const handlePreviewWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY < 0 ? 1 : -1;
-      setCaptionFontSize(prev => Math.max(16, Math.min(64, prev + delta)));
     }
   };
 
@@ -730,11 +659,11 @@ export default function App() {
     if (chunked.length > 0 && !chunked.some(c => c.id === selectedClipId)) {
       setSelectedClipId(chunked[0].id);
     }
-    setStatusMessage(`Dynamic-split all captions to maximum ${wordsLimit} words per line.`);
+    setStatusMessage(`Dynamic-split captions to maximum ${wordsLimit} words per line.`);
     setStatusType('success');
   };
 
-  // Add new caption clip at current time
+  // Add new caption clip
   const handleAddCaption = () => {
     const startSec = Math.floor(currentTime);
     const endSec = Math.min(startSec + 2, Math.floor(duration));
@@ -745,12 +674,12 @@ export default function App() {
       end: formatSecondsToTime(endSec),
       startSec,
       endSec,
-      text: 'New punchy subtitle text'
+      text: 'New punchy caption text'
     };
     const updated = [...captions, newClip].sort((a, b) => a.startSec - b.startSec);
     setCaptions(updated);
     setSelectedClipId(newId);
-    setStatusMessage(`Added subtitle clip at ${newClip.start}.`);
+    setStatusMessage(`Added caption clip at ${newClip.start}.`);
     setStatusType('info');
   };
 
@@ -758,7 +687,7 @@ export default function App() {
   const handleSplitCaption = () => {
     const selected = captions.find(c => c.id === selectedClipId);
     if (!selected) {
-      setStatusMessage('Select a caption block in the editor to split.');
+      setStatusMessage('Select a caption block in the timeline to split.');
       setStatusType('info');
       return;
     }
@@ -804,7 +733,7 @@ export default function App() {
     updated.sort((a, b) => a.startSec - b.startSec);
     setCaptions(updated);
     setSelectedClipId(newId);
-    setStatusMessage(`Split subtitle at ${firstEnd}.`);
+    setStatusMessage(`Split caption at ${firstEnd}.`);
     setStatusType('success');
   };
 
@@ -844,7 +773,7 @@ export default function App() {
     if (format === 'srt') {
       content = captions.map((c, i) => `${i + 1}\n00:${c.start},000 --> 00:${c.end},000\n${c.text}\n`).join('\n');
     } else {
-      content = `WEBVTT - Exported by CaptionPro\n\n` + captions.map((c, i) => `${i + 1}\n00:${c.start}.000 --> 00:${c.end}.000\n${c.text}\n`).join('\n');
+      content = `WEBVTT - Exported by Caption Free\n\n` + captions.map((c, i) => `${i + 1}\n00:${c.start}.000 --> 00:${c.end}.000\n${c.text}\n`).join('\n');
     }
 
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
@@ -858,32 +787,29 @@ export default function App() {
     setStatusType('success');
   };
 
-  // Gemini AI Transcription with automatic 4-6 words chunking & resilient error protection
-  // Hugging Face Whisper Large v3 (openai/whisper-large-v3) Real Audio Transcription
+  // AI Speech-to-text Transcription using Gemini 2.5 Flash / Hugging Face Whisper
   const handleGenerateCaptions = async () => {
     if (!videoFile && !videoSrc) {
-      setStatusMessage("Please upload a video file first to transcribe real audio.");
+      setStatusMessage("Please import a media file first to transcribe real audio.");
       setStatusType("error");
       return;
     }
 
-    // Reset and hide captions so they are displayed only once complete (Requirement 5)
     setCaptions([]);
     setSelectedClipId('');
     setIsTranscribing(true);
     setTranscribeProgress(15);
-    setTranscribeStatusText(`Connecting to Hugging Face Whisper Large v3 (${language})...`);
-    setStatusMessage(`Transcribing real audio with Hugging Face Whisper Large v3 in ${language}...`);
+    setTranscribeStatusText(`Connecting to AI Speech Recognition Engine (${language})...`);
+    setStatusMessage(`Transcribing real audio with AI in ${language}...`);
     setStatusType('info');
 
-    // Simulate animated loading progress steps while waiting for Whisper API
     const progressTimer = setInterval(() => {
       setTranscribeProgress(prev => {
         if (prev < 30) {
           setTranscribeStatusText('Extracting audio track (16kHz mono)...');
           return prev + 5;
         } else if (prev < 65) {
-          setTranscribeStatusText(`Transcribing speech with openai/whisper-large-v3 (${language})...`);
+          setTranscribeStatusText(`Transcribing speech with Gemini / Whisper (${language})...`);
           return prev + 6;
         } else if (prev < 90) {
           setTranscribeStatusText('Aligning word-level timestamps and segment chunks...');
@@ -897,11 +823,10 @@ export default function App() {
       let res: Response | null = null;
 
       if (videoFile) {
-        // Try compact client-extracted audioBase64 first (extremely fast), or fallback to multipart video file upload
         try {
-          setTranscribeStatusText("Extracting audio from video file...");
+          setTranscribeStatusText("Extracting audio from media file...");
           const audioBase64 = await extractAudioBase64(videoFile);
-          setTranscribeStatusText(`Sending audio to Hugging Face Whisper Large v3 (${language})...`);
+          setTranscribeStatusText(`Sending audio to AI Engine (${language})...`);
           res = await fetch('/api/transcribe-video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -947,15 +872,9 @@ export default function App() {
       const data = await res.json();
 
       if (!res.ok || data.error) {
-        if (data.error === 'MISSING_HF_TOKEN') {
-          setStatusMessage("HF_TOKEN environment variable is not configured on the server. Please add HF_TOKEN to your environment variables to use Hugging Face Whisper.");
-          setStatusType("error");
-          setTranscribeStatusText("Error: HF_TOKEN missing on server.");
-        } else {
-          setStatusMessage(data.message || `Whisper transcription failed: ${data.error || 'Server error'}`);
-          setStatusType("error");
-          setTranscribeStatusText(`Failed: ${data.message || data.error}`);
-        }
+        setStatusMessage(data.message || `AI transcription failed: ${data.error || 'Server error'}`);
+        setStatusType("error");
+        setTranscribeStatusText(`Failed: ${data.message || data.error}`);
         return;
       }
 
@@ -964,13 +883,12 @@ export default function App() {
 
       const captionsData = data.captions;
       if (!captionsData || !Array.isArray(captionsData) || captionsData.length === 0) {
-        setStatusMessage("No spoken dialogue was detected in this video's audio track.");
+        setStatusMessage("No spoken dialogue was detected in this media's audio track.");
         setStatusType("info");
         setTranscribeStatusText("No speech detected.");
         return;
       }
 
-      // Format segments
       const parsed: CaptionSegment[] = captionsData.map((item: any, idx: number) => {
         const startSec = parseTimeToSeconds(item.start ?? 0);
         const endSec = parseTimeToSeconds(item.end ?? (startSec + 2.5));
@@ -991,23 +909,21 @@ export default function App() {
         };
       });
 
-      // Split into 4-6 words standard short-form segments
       const enforcedChunks = splitIntoWordChunks(parsed, maxWordsPerLine);
       enforcedChunks.sort((a, b) => a.startSec - b.startSec);
 
-      // Display the captions only once they are complete! (Requirement 5)
       setTranscribeProgress(100);
       setTranscribeStatusText("Complete!");
       setCaptions(enforcedChunks);
       if (enforcedChunks.length > 0) {
         setSelectedClipId(enforcedChunks[0].id);
       }
-      setStatusMessage(`Successfully transcribed ${enforcedChunks.length} segments with Hugging Face Whisper Large v3 (${language})!`);
+      setStatusMessage(`Successfully transcribed ${enforcedChunks.length} segments with AI (${language})!`);
       setStatusType('success');
     } catch (err: any) {
       clearInterval(progressTimer);
       console.error("Transcription error:", err);
-      setStatusMessage(`Caption Generation Incomplete: ${err.message || 'Please check your audio track or HF_TOKEN.'}`);
+      setStatusMessage(`Caption Generation Incomplete: ${err.message || 'Please check your audio track.'}`);
       setStatusType("error");
       setTranscribeStatusText("Transcription failed.");
     } finally {
@@ -1015,7 +931,7 @@ export default function App() {
     }
   };
 
-  // Video Export (Server-Side FFmpeg Render Pipeline with full duration & preserved audio + Client Fallback)
+  // Video Export (Full duration & preserved audio)
   const handleExportBurnedVideo = async () => {
     const video = videoRef.current;
     if (!video) {
@@ -1026,10 +942,10 @@ export default function App() {
 
     setIsExporting(true);
     setExportProgress(10);
-    setStatusMessage('Initiating high-fidelity server render pipeline with preserved audio...');
+    setStatusMessage('Initiating server render pipeline with preserved audio...');
     setStatusType('info');
 
-    // Attempt 1: Server-Side FFmpeg Render (Scales for high concurrency, full video duration, zero audio loss)
+    // Attempt 1: Server-Side FFmpeg Render
     try {
       let fileToUpload: File | Blob | null = videoFile;
       if (!fileToUpload && videoSrc) {
@@ -1062,19 +978,16 @@ export default function App() {
           const exportedBlob = await serverResp.blob();
 
           if (exportedBlob && exportedBlob.size > 1000) {
-            // Test logic: verify exported video length matches input duration
             const serverDurationHeader = parseFloat(serverResp.headers.get('X-Video-Duration') || '0');
             const probedDur = await verifyBlobDuration(exportedBlob);
             const verifiedDuration = probedDur > 0 ? probedDur : (serverDurationHeader > 0 ? serverDurationHeader : (duration || 20));
             const targetDuration = duration || 20;
-            const diff = Math.abs(verifiedDuration - targetDuration);
-            console.log(`[Export Test Logic] Verified: ${verifiedDuration.toFixed(2)}s | Target: ${targetDuration.toFixed(2)}s | Diff: ${diff.toFixed(2)}s`);
 
             const mp4Blob = new Blob([exportedBlob], { type: 'video/mp4' });
             const downloadUrl = URL.createObjectURL(mp4Blob);
             const a = document.createElement('a');
             a.href = downloadUrl;
-            a.download = 'captionpro-export.mp4';
+            a.download = 'captionfree-export.mp4';
             document.body.appendChild(a);
             a.click();
             setTimeout(() => {
@@ -1085,14 +998,11 @@ export default function App() {
             }, 5000);
 
             setExportProgress(100);
-            setStatusMessage(`Export test passed! Exported ${Math.round(verifiedDuration)}s full-duration video (matches original ${Math.round(targetDuration)}s) with audio.`);
+            setStatusMessage(`Export complete! Exported ${Math.round(verifiedDuration)}s video with preserved audio.`);
             setStatusType('success');
             setIsExporting(false);
             return;
           }
-        } else {
-          const errText = await serverResp.text();
-          console.warn("Server render failed with status:", serverResp.status, errText);
         }
       }
     } catch (serverErr) {
@@ -1114,18 +1024,14 @@ export default function App() {
 
       let rawWidth = video.videoWidth || 1280;
       let rawHeight = video.videoHeight || 720;
-
-      // 1. Detect mobile device (userAgent check or screen width under 768px)
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
 
-      // 2. On mobile, cap max height at 720px while preserving aspect ratio
       if (isMobile && rawHeight > 720) {
         const ratio = rawWidth / rawHeight;
         rawHeight = 720;
         rawWidth = Math.round(rawHeight * ratio);
       }
 
-      // Ensure width and height are even numbers for H.264/yuv420p compatibility
       let width = rawWidth % 2 !== 0 ? rawWidth - 1 : rawWidth;
       let height = rawHeight % 2 !== 0 ? rawHeight - 1 : rawHeight;
 
@@ -1134,9 +1040,7 @@ export default function App() {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
 
-      if (!ctx) {
-        throw new Error('Canvas 2D context not supported');
-      }
+      if (!ctx) throw new Error('Canvas 2D context not supported');
 
       let mimeType = '';
       const mp4Candidates = [
@@ -1158,28 +1062,21 @@ export default function App() {
 
       if (!mimeType) {
         setIsExporting(false);
-        setStatusMessage('Error: This browser cannot export a compatible video. Please use Chrome, Edge, or Safari.');
+        setStatusMessage('Error: This browser cannot export compatible video. Please use Chrome or Safari.');
         setStatusType('error');
         return;
       }
 
       const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
-
-      // Capture video stream from canvas at 30 fps
       canvasStream = canvas.captureStream(30);
 
-      // Capture audio stream from video element (Stereo 44100Hz)
       try {
         if ((video as any).captureStream) {
           const vidCaptured = (video as any).captureStream();
-          if (vidCaptured.getAudioTracks().length > 0) {
-            audioStream = vidCaptured;
-          }
+          if (vidCaptured.getAudioTracks().length > 0) audioStream = vidCaptured;
         } else if ((video as any).mozCaptureStream) {
           const vidCaptured = (video as any).mozCaptureStream();
-          if (vidCaptured.getAudioTracks().length > 0) {
-            audioStream = vidCaptured;
-          }
+          if (vidCaptured.getAudioTracks().length > 0) audioStream = vidCaptured;
         }
 
         if (!audioStream) {
@@ -1194,18 +1091,11 @@ export default function App() {
         console.warn("Audio capture fallback warning:", audioErr);
       }
 
-      // Combine canvas video track and video audio track into export stream before recording starts
       combinedStream = new MediaStream();
-      if (canvasStream) {
-        canvasStream.getVideoTracks().forEach(track => combinedStream!.addTrack(track));
-      }
-      if (audioStream) {
-        audioStream.getAudioTracks().forEach(track => combinedStream!.addTrack(track));
-      }
+      if (canvasStream) canvasStream.getVideoTracks().forEach(track => combinedStream!.addTrack(track));
+      if (audioStream) audioStream.getAudioTracks().forEach(track => combinedStream!.addTrack(track));
 
-      // 3. Use lower video bitrate on mobile (2.5 Mbps) vs desktop (4 Mbps)
       const videoBitrate = isMobile ? 2500000 : 4000000;
-
       const recorder = new MediaRecorder(combinedStream, {
         mimeType,
         audioBitsPerSecond: 128000,
@@ -1217,16 +1107,13 @@ export default function App() {
       };
 
       const renderPromise = new Promise<Blob>((resolve, reject) => {
-        recorder.onstop = () => {
-          const finalBlob = new Blob(chunks, { type: mimeType });
-          resolve(finalBlob);
-        };
+        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
         recorder.onerror = (e) => reject(e);
       });
 
       video.muted = false;
       video.pause();
-      // Always force seek to beginning so video.ended resets to false before recording starts
+
       await new Promise<void>((seekResolve) => {
         let settled = false;
         const onSeeked = () => {
@@ -1247,15 +1134,12 @@ export default function App() {
         }, 500);
       });
 
-      // Determine exact video duration (e.g. 60s or 5 mins) before starting recorder
       const exactDuration = await getExactVideoDuration(video);
       const targetDuration = Math.max(exactDuration, video.duration || 0, duration || 0, 5);
 
-      // Start recording with 250ms timeslice to collect chunks continuously
       recorder.start(250);
       await video.play().catch(() => {});
 
-      // Real-time frame loop ensuring full video duration is recorded without premature cutoff
       await new Promise<void>((resolve) => {
         let isResolved = false;
 
@@ -1263,19 +1147,15 @@ export default function App() {
           if (isResolved) return;
 
           const currentTime = video.currentTime;
-          
-          // Stop ONLY when currentTime reaches targetDuration (e.g. 60s for 60s video)
           const isFinished = (currentTime >= (targetDuration - 0.1)) || (video.ended && currentTime >= (targetDuration - 0.5));
 
           if (isFinished) {
             isResolved = true;
-            // Draw final frame
             ctx.drawImage(video, 0, 0, width, height);
             resolve();
             return;
           }
 
-          // If playback stalls or pauses prior to target duration, force play to keep recording full length
           if (video.paused && currentTime < (targetDuration - 0.5)) {
             video.play().catch(() => {});
           }
@@ -1283,10 +1163,8 @@ export default function App() {
           const pct = Math.min(99, Math.round((currentTime / targetDuration) * 100));
           setExportProgress(pct);
 
-          // Draw video frame
           ctx.drawImage(video, 0, 0, width, height);
 
-          // Draw active caption overlay matching exact styling
           const activeClip = captions.find(c => currentTime >= c.startSec && currentTime <= c.endSec);
           if (activeClip && activeClip.text.trim()) {
             ctx.save();
@@ -1306,9 +1184,7 @@ export default function App() {
               Math.max(0, Math.floor((elapsed / segDuration) * totalWords))
             );
 
-            // Check if text contains Urdu/Arabic characters (\u0600-\u06FF)
             const isRtl = /[\u0600-\u06FF]/.test(activeClip.text);
-
             const spaceWidth = ctx.measureText(' ').width;
             const wordWidths = words.map(w => ctx.measureText(isRtl ? w : w.toUpperCase()).width);
             const totalLineWidth = wordWidths.reduce((a, b) => a + b, 0) + spaceWidth * Math.max(0, words.length - 1);
@@ -1316,10 +1192,7 @@ export default function App() {
             const minMargin = width * 0.02;
             let cursorX = Math.max(minMargin, Math.min(width - totalLineWidth - minMargin, xCenter - (totalLineWidth / 2)));
 
-            if (isRtl) {
-              // Right-to-Left layout for Urdu/Arabic: start drawing from the rightmost edge of totalLineWidth
-              cursorX = xCenter + (totalLineWidth / 2);
-            }
+            if (isRtl) cursorX = xCenter + (totalLineWidth / 2);
 
             for (let wIdx = 0; wIdx < words.length; wIdx++) {
               const rawWord = words[wIdx];
@@ -1327,34 +1200,22 @@ export default function App() {
               const isActive = wIdx === activeWordIdx;
               const wWidth = wordWidths[wIdx];
 
-              if (isRtl) {
-                cursorX -= wWidth;
-              }
+              if (isRtl) cursorX -= wWidth;
 
               ctx.save();
               ctx.textAlign = 'left';
-
               ctx.lineWidth = Math.max(4, baseSize * 0.16);
               ctx.lineJoin = 'miter';
               ctx.miterLimit = 2;
               ctx.strokeStyle = '#000000';
               ctx.strokeText(word, cursorX, yPos);
 
-              if (isActive) {
-                ctx.fillStyle = '#fde047';
-                ctx.fillText(word, cursorX, yPos);
-              } else {
-                ctx.fillStyle = '#ffffff';
-                ctx.fillText(word, cursorX, yPos);
-              }
-
+              ctx.fillStyle = isActive ? '#10b981' : (captionColor || '#ffffff');
+              ctx.fillText(word, cursorX, yPos);
               ctx.restore();
 
-              if (!isRtl) {
-                cursorX += wWidth + spaceWidth;
-              } else {
-                cursorX -= spaceWidth;
-              }
+              if (!isRtl) cursorX += wWidth + spaceWidth;
+              else cursorX -= spaceWidth;
             }
 
             ctx.restore();
@@ -1366,7 +1227,6 @@ export default function App() {
         requestAnimationFrame(drawFrame);
       });
 
-      // Flush remaining data from recorder and ensure streams are cleanly closed
       if (recorder.state === 'recording') {
         try { recorder.requestData(); } catch (e) {}
         await new Promise(r => setTimeout(r, 150));
@@ -1379,56 +1239,12 @@ export default function App() {
       if (origPlaying) video.play();
 
       const outputBlob = await renderPromise;
-      
       let finalBlob = outputBlob;
-      try {
-        setStatusMessage('Finalizing video...');
-        setStatusType('info');
-
-        // Dynamically load ffmpeg.wasm from CDN using eval to satisfy TypeScript
-        if (!(window as any)._ffmpegInstance) {
-          const { FFmpeg } = await (0, eval)("import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js')");
-          const { toBlobURL, fetchFile } = await (0, eval)("import('https://unpkg.com/@ffmpeg/util@0.12.2/dist/esm/index.js')");
-          
-          const ffmpeg = new FFmpeg();
-          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-          await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-          });
-          (window as any)._ffmpegInstance = { ffmpeg, fetchFile };
-        }
-
-        const { ffmpeg, fetchFile } = (window as any)._ffmpegInstance;
-        const inputName = `input_${Date.now()}.${fileExt}`;
-        const outputName = `output_${Date.now()}.${fileExt}`;
-
-        await ffmpeg.writeFile(inputName, await fetchFile(outputBlob));
-        // Remux with -c copy and -movflags +faststart (no re-encoding)
-        await ffmpeg.exec(['-i', inputName, '-c', 'copy', '-movflags', '+faststart', outputName]);
-        
-        const data = await ffmpeg.readFile(outputName);
-        finalBlob = new Blob([data], { type: mimeType });
-
-        try {
-          await ffmpeg.deleteFile(inputName);
-          await ffmpeg.deleteFile(outputName);
-        } catch (e) {
-          // ignore cleanup errors
-        }
-      } catch (remuxErr) {
-        console.warn("FFmpeg.wasm remuxing skipped/failed, falling back to original recording blob:", remuxErr);
-      }
-
-      // Test logic confirming client output duration matches target duration
-      const probedDur = await verifyBlobDuration(finalBlob);
-      const verifiedDuration = probedDur > 0 ? probedDur : targetDuration;
-      console.log(`[Client Export Test Logic] Verified: ${verifiedDuration.toFixed(2)}s | Target: ${targetDuration.toFixed(2)}s`);
 
       const downloadUrl = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = `captioned-video.${fileExt}`;
+      a.download = `captionfree-export.${fileExt}`;
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
@@ -1438,7 +1254,7 @@ export default function App() {
         } catch (e) {}
       }, 5000);
 
-      setStatusMessage(`Export test passed! Exported captioned-video.${fileExt} (${Math.round(verifiedDuration)}s full duration) with audio.`);
+      setStatusMessage(`Exported video (${Math.round(targetDuration)}s full duration) with audio.`);
       setStatusType('success');
     } catch (err: any) {
       console.error("Export error:", err);
@@ -1447,20 +1263,11 @@ export default function App() {
     } finally {
       setIsExporting(false);
       setExportProgress(0);
-      // 4. Release recorder, stream tracks, and clear chunks array to free memory
       try {
-        if (combinedStream) {
-          combinedStream.getTracks().forEach(track => track.stop());
-        }
-        if (canvasStream) {
-          canvasStream.getTracks().forEach(track => track.stop());
-        }
-        if (audioStream) {
-          audioStream.getTracks().forEach(track => track.stop());
-        }
-      } catch (e) {
-        console.warn("Stream cleanup warning:", e);
-      }
+        if (combinedStream) combinedStream.getTracks().forEach(track => track.stop());
+        if (canvasStream) canvasStream.getTracks().forEach(track => track.stop());
+        if (audioStream) audioStream.getTracks().forEach(track => track.stop());
+      } catch (e) {}
       chunks.length = 0;
     }
   };
@@ -1470,17 +1277,9 @@ export default function App() {
     const video = videoRef.current;
     if (!video) return;
 
-    const onTimeUpdate = () => {
-      setCurrentTime(video.currentTime);
-    };
-
-    const onLoadedMetadata = () => {
-      setDuration(video.duration || 15);
-    };
-
-    const onEnded = () => {
-      setIsPlaying(false);
-    };
+    const onTimeUpdate = () => setCurrentTime(video.currentTime);
+    const onLoadedMetadata = () => setDuration(video.duration || 15);
+    const onEnded = () => setIsPlaying(false);
 
     video.addEventListener('timeupdate', onTimeUpdate);
     video.addEventListener('loadedmetadata', onLoadedMetadata);
@@ -1494,1016 +1293,451 @@ export default function App() {
   }, [videoSrc]);
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-white flex flex-col selection:bg-indigo-600 selection:text-white">
-      {/* SECTION 1: Clean Navigation Header */}
-      <header className="h-14 border-b border-zinc-800 bg-[#09090b]/90 backdrop-blur sticky top-0 z-40 px-4 md:px-6 flex items-center justify-between">
-        {/* Left: Minimalist Text Logo */}
-        <div className="flex items-center gap-2">
-          <span className="font-extrabold text-lg tracking-tight text-white font-['Plus_Jakarta_Sans']">
-            Caption<span className="text-indigo-500">Pro</span>
-          </span>
-          <span className="hidden sm:inline-block text-xs text-zinc-500 font-medium border-l border-zinc-800 pl-2">
-            AI Subtitle Studio
-          </span>
-        </div>
-
-        {/* Right: User Profile Circle & Export Video CTA */}
+    <div className="min-h-screen bg-[#000000] text-[#ffffff] flex flex-col font-sans selection:bg-[#10b981] selection:text-black">
+      {/* Sticky Navigation Header */}
+      <header className="flex justify-between items-center px-[5%] py-[15px] bg-black/90 backdrop-blur-md sticky top-0 z-50 border-b border-[#1f1f23]">
         <div className="flex items-center gap-3">
-          <div
-            title="Account Profile"
-            className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-300 hover:text-white hover:border-zinc-500 transition-colors cursor-pointer"
-          >
-            <User className="w-4 h-4" />
-          </div>
-
-          <button
-            onClick={handleExportBurnedVideo}
-            disabled={isExporting}
-            className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-md text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm cursor-pointer"
-          >
-            {isExporting ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Exporting ({exportProgress}%)</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-4 h-4" />
-                <span>Export Video</span>
-              </>
-            )}
-          </button>
+          <a href="#" className="text-[22px] font-[800] text-[#10b981] no-underline tracking-tight">
+            Caption Free
+          </a>
+          <span className="hidden sm:inline-block text-xs text-[#a1a1aa] font-medium border-l border-[#1f1f23] pl-2.5">
+            AI Caption Studio
+          </span>
         </div>
+
+        <nav className="flex items-center gap-5">
+          <a href="#" className="text-[#ffffff] text-[14px] font-[600] transition-colors hover:text-[#10b981]">Home</a>
+          <a href="#faq-section" className="text-[#a1a1aa] text-[14px] font-[600] transition-colors hover:text-[#ffffff]">FAQ</a>
+          <a href="#about-section" className="text-[#a1a1aa] text-[14px] font-[600] transition-colors hover:text-[#ffffff]">About</a>
+          {hasMedia && (
+            <button
+              onClick={handleExportBurnedVideo}
+              disabled={isExporting}
+              className="ml-2 bg-[#10b981] hover:bg-[#059669] text-black font-bold py-1.5 px-4 rounded-lg text-xs transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_20px_rgba(16,185,129,0.5)] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>{isExporting ? `Exporting (${exportProgress}%)` : 'Export Video'}</span>
+            </button>
+          )}
+        </nav>
       </header>
 
-      {/* Status Bar */}
-      <div className={`px-4 md:px-6 py-2 border-b text-xs flex items-center justify-between transition-colors ${
-        statusType === 'error'
-          ? 'bg-red-950/40 border-red-900/50 text-red-300'
-          : statusType === 'success'
-          ? 'bg-emerald-950/40 border-emerald-900/50 text-emerald-300'
-          : 'bg-[#18181b]/60 border-zinc-800/80 text-zinc-400'
-      }`}>
-        <div className="flex items-center gap-2 truncate">
-          {statusType === 'error' ? (
-            <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-400" />
-          ) : isTranscribing ? (
-            <Loader2 className="w-3.5 h-3.5 shrink-0 animate-spin text-indigo-400" />
-          ) : (
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
-          )}
-          <span className="truncate">{statusMessage}</span>
-        </div>
-
-        <div className="hidden sm:flex items-center gap-3 shrink-0 text-zinc-500">
-          <span>{captions.length} captions</span>
-          <span>•</span>
-          <span className="font-mono text-zinc-400">{selectedFont}</span>
-          <span>•</span>
-          <span className="truncate max-w-[120px]">{videoFileName}</span>
-        </div>
-      </div>
-
-      {/* SECTION 2: Central Workspace (Split 2-Column Desktop Grid) */}
-      <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Main Container */}
+      <main className="max-w-[1100px] w-full mx-auto px-5 py-10 flex-1">
         
-        {/* Left Column: Video Preview Area (7 cols on desktop) */}
-        <section className="lg:col-span-7 flex flex-col gap-3">
-          <div className="bg-[#18181b] border border-zinc-800 rounded-xl p-3 flex flex-col">
-            {/* Top Toolbar: 5 Dynamic Aspect Ratios & 2D Position Indicator */}
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3 flex-wrap gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
-                  Video Preview
-                </span>
-                <span className="text-[11px] text-zinc-400 font-mono bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800 flex items-center gap-1.5" title="Live 2D caption coordinates">
-                  <Move className="w-3 h-3 text-indigo-400" />
-                  <span>X: {captionXPercent}% • Y: {captionYPercent}%</span>
-                </span>
+        {/* Hero Section */}
+        <section className="text-center py-[40px] pb-[60px]" id="landing-hero">
+          <h1 className="text-[34px] sm:text-[46px] font-[900] leading-[1.2] mb-[15px] tracking-[-1px] text-white">
+            Every word deserves the spotlight.
+          </h1>
+          <p className="text-[#a1a1aa] text-[15px] sm:text-[17px] max-w-[580px] mx-auto mb-[30px]">
+            Turn your media into engaging, easy-to-follow captions. Choose your language, personalize the look, and create a style that feels like yours.
+          </p>
+
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <button
+              onClick={triggerImport}
+              className="bg-[#10b981] hover:bg-[#059669] text-black font-[700] px-8 py-3.5 rounded-lg text-[15px] cursor-pointer transition-all hover:-translate-y-0.5 shadow-[0_0_20px_rgba(16,185,129,0.4)] flex items-center gap-2"
+            >
+              <span>＋</span> Import Media
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="video/*,audio/*"
+              className="hidden"
+              onChange={handleFileInputChange}
+            />
+          </div>
+
+          {/* Feature Summary Cards (Hidden when workspace is expanded) */}
+          {!hasMedia && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 my-[50px]">
+              <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl text-left hover:border-[#10b981]/50 transition-colors">
+                <h3 className="text-[16px] font-bold text-[#10b981] mb-2">✦ AI Caption Generation</h3>
+                <p className="text-[13px] text-[#a1a1aa] leading-[1.4]">Prepare your media files for instant audio speech recognition workflow.</p>
               </div>
-
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* Quick 2D Snap Presets */}
-                <div className="hidden xl:flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-xs text-zinc-400">
-                  <button
-                    type="button"
-                    onClick={() => { setCaptionXPercent(50); setCaptionYPercent(18); }}
-                    className={`px-2 py-0.5 rounded transition-colors ${captionYPercent === 18 && captionXPercent === 50 ? 'bg-zinc-700 text-white font-medium' : 'hover:text-white'}`}
-                    title="Snap to Top Center"
-                  >
-                    Top
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCaptionXPercent(50); setCaptionYPercent(50); }}
-                    className={`px-2 py-0.5 rounded transition-colors ${captionYPercent === 50 && captionXPercent === 50 ? 'bg-zinc-700 text-white font-medium' : 'hover:text-white'}`}
-                    title="Snap to Center"
-                  >
-                    Center
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCaptionXPercent(50); setCaptionYPercent(80); }}
-                    className={`px-2 py-0.5 rounded transition-colors ${captionYPercent === 80 && captionXPercent === 50 ? 'bg-zinc-700 text-white font-medium' : 'hover:text-white'}`}
-                    title="Snap to Bottom Center"
-                  >
-                    Bottom
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setCaptionXPercent(50); setCaptionYPercent(80); }}
-                    className="p-1 text-zinc-500 hover:text-zinc-300 rounded"
-                    title="Reset to default position (X:50%, Y:80%)"
-                  >
-                    <RotateCcw className="w-3 h-3" />
-                  </button>
-                </div>
-
-                {/* 5 Video Aspect Ratios */}
-                <div className="flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-xs overflow-x-auto max-w-full">
-                  <button
-                    type="button"
-                    onClick={() => setAspectRatio('9:16')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 ${
-                      aspectRatio === '9:16'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                    title="9:16 Shorts / Reels / TikTok"
-                  >
-                    <Smartphone className="w-3.5 h-3.5" />
-                    <span>9:16</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setAspectRatio('1:1')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 ${
-                      aspectRatio === '1:1'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                    title="1:1 Square (Instagram / Facebook Feeds)"
-                  >
-                    <Square className="w-3.5 h-3.5" />
-                    <span>1:1</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setAspectRatio('3:4')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 ${
-                      aspectRatio === '3:4'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                    title="3:4 Portrait (Vertical Feed Optimization)"
-                  >
-                    <span className="font-mono text-[10px] border border-current px-0.5 rounded leading-none">3:4</span>
-                    <span>3:4</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setAspectRatio('4:3')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 ${
-                      aspectRatio === '4:3'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                    title="4:3 Standard (Classic Video Format)"
-                  >
-                    <span className="font-mono text-[10px] border border-current px-0.5 rounded leading-none">4:3</span>
-                    <span>4:3</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setAspectRatio('16:9')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md font-medium transition-colors cursor-pointer shrink-0 ${
-                      aspectRatio === '16:9'
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                    title="16:9 Wide (Landscape YouTube)"
-                  >
-                    <Monitor className="w-3.5 h-3.5" />
-                    <span>16:9</span>
-                  </button>
-                </div>
+              <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl text-left hover:border-[#10b981]/50 transition-colors">
+                <h3 className="text-[16px] font-bold text-[#10b981] mb-2">文 Multiple Languages</h3>
+                <p className="text-[13px] text-[#a1a1aa] leading-[1.4]">Full optimization support for English, Urdu, Roman Urdu, and Arabic scripts.</p>
+              </div>
+              <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl text-left hover:border-[#10b981]/50 transition-colors">
+                <h3 className="text-[16px] font-bold text-[#10b981] mb-2">▣ Visual Caption Styles</h3>
+                <p className="text-[13px] text-[#a1a1aa] leading-[1.4]">Easily adapt custom sizing, layout placement, backgrounds, and fonts.</p>
               </div>
             </div>
+          )}
+        </section>
 
-            {/* Video Player Container with Smooth Aspect Ratio Transition & 2-Finger Pinch-to-Zoom */}
-            <div
-              ref={videoContainerRef}
-              onTouchStart={handlePreviewTouchStart}
-              onTouchMove={handlePreviewTouchMove}
-              onTouchEnd={handlePreviewTouchEnd}
-              onWheel={handlePreviewWheel}
-              className="relative bg-black rounded-lg overflow-hidden flex items-center justify-center min-h-[380px] md:min-h-[460px] select-none transition-all duration-300"
-            >
-              {/* Real-time Pinch-to-Zoom HUD Indicator */}
-              {isPinching && (
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none bg-black/85 backdrop-blur-md border border-indigo-500/80 rounded-full px-4 py-1.5 text-xs text-indigo-300 flex items-center gap-2 shadow-2xl animate-pulse">
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Pinch to Resize: <strong className="text-white font-mono text-sm">{captionFontSize}px</strong></span>
+        {/* Studio Workspace Section */}
+        {hasMedia && (
+          <section className="border-t border-[#1f1f23] pt-10 mt-5 transition-all duration-500" id="main-studio-workspace">
+            <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-7">
+              
+              {/* Left Panel: Media Player & Subtitle Timeline */}
+              <div className="bg-[#0a0a0c] border border-[#1f1f23] p-6 rounded-2xl flex flex-col gap-4">
+                <div className="flex items-center justify-between pb-2 border-b border-[#1f1f23]">
+                  <h2 className="text-[18px] font-bold text-white flex items-center gap-2">
+                    <Film className="w-4 h-4 text-[#10b981]" />
+                    <span>Media Player</span>
+                  </h2>
+                  <span className="text-xs font-mono text-[#a1a1aa] bg-[#000000] px-2 py-0.5 rounded border border-[#1f1f23]">
+                    X: {captionXPercent}% • Y: {captionYPercent}%
+                  </span>
                 </div>
-              )}
 
-              {/* ANIMATED EXPORT PREVIEW (CapCut / VN style shrinking-card with laser wave ripple)
-                  CRITICAL: Only affects on-screen preview DOM styling, NOT the output video file */}
-              {isExporting && (
-                <div className="absolute inset-0 z-30 pointer-events-none overflow-hidden rounded-2xl flex flex-col justify-between">
-                  {/* CapCut / VN Laser Scanning Wave Bar */}
-                  <div className="absolute inset-x-0 h-2 bg-gradient-to-r from-transparent via-cyan-400 to-transparent blur-[1px] anim-export-scan shadow-[0_0_20px_#22d3ee]" />
+                {/* Video Container */}
+                <div
+                  ref={videoContainerRef}
+                  onTouchStart={handlePreviewTouchStart}
+                  onTouchMove={handlePreviewTouchMove}
+                  onTouchEnd={handlePreviewTouchEnd}
+                  className="relative w-full aspect-[9/16] max-h-[520px] bg-[#050505] rounded-lg border border-[#1f1f23] overflow-hidden flex items-center justify-center group select-none"
+                >
+                  <video
+                    ref={videoRef}
+                    src={videoSrc}
+                    controls
+                    playsInline
+                    className="w-full h-full object-contain bg-black"
+                    onClick={togglePlay}
+                  />
 
-                  {/* High-tech Ripple Gradient Aura */}
-                  <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/15 via-transparent to-purple-600/15 backdrop-blur-[0.5px]" />
-
-                  {/* Floating CapCut / VN Export HUD Pill */}
-                  <div className="relative mt-4 mx-auto bg-black/90 backdrop-blur-md border border-indigo-500/70 rounded-full px-5 py-2 flex items-center gap-3 shadow-2xl">
-                    <span className="relative flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-500"></span>
-                    </span>
-                    <div className="flex flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-white uppercase tracking-wider">Exporting Video</span>
-                        <span className="font-mono text-xs font-extrabold text-cyan-400">{exportProgress}%</span>
-                      </div>
-                      <span className="text-[10px] text-zinc-400">Preserving full duration & original aspect ratio</span>
-                    </div>
-                  </div>
-
-                  {/* Bottom Progress Bar inside preview card */}
-                  <div className="relative mb-3 mx-6">
-                    <div className="w-full bg-zinc-900/90 rounded-full h-1.5 overflow-hidden border border-zinc-700/60 shadow-inner">
-                      <div
-                        className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-400 transition-all duration-300"
-                        style={{ width: `${exportProgress}%` }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div
-                className={`relative w-full flex items-center justify-center transition-all duration-700 ease-out ${
-                  isExporting ? 'scale-[0.91] ring-2 ring-indigo-500/90 shadow-[0_0_60px_rgba(99,102,241,0.5)] rounded-2xl overflow-hidden' : ''
-                } ${
-                  aspectRatio === '9:16'
-                    ? 'aspect-[9/16] max-h-[500px] max-w-[282px] sm:max-w-[310px]'
-                    : aspectRatio === '1:1'
-                    ? 'aspect-square max-h-[460px] max-w-[460px]'
-                    : aspectRatio === '3:4'
-                    ? 'aspect-[3/4] max-h-[500px] max-w-[375px]'
-                    : aspectRatio === '4:3'
-                    ? 'aspect-[4/3] max-h-[480px] max-w-[640px]'
-                    : 'aspect-video max-h-[480px] max-w-[854px]'
-                }`}
-              >
-                <video
-                  ref={videoRef}
-                  src={videoSrc}
-                  crossOrigin="anonymous"
-                  playsInline
-                  className="w-full h-full object-contain bg-black"
-                  onClick={togglePlay}
-                />
-
-                {/* FULL 2D DRAGGABLE & PINCH-RESIZABLE CAPTION OVERLAY: ABSOLUTE TRANSPARENCY, NO BLACK STRIP */}
-                {activeCaptionAtCurrentTime && activeCaptionAtCurrentTime.text.trim() && (() => {
-                  const isPureUrdu = language === 'Urdu';
-                  const words = activeCaptionAtCurrentTime.text.trim().split(/\s+/).filter(Boolean);
-                  const totalWords = words.length;
-                  const segDuration = Math.max(0.1, activeCaptionAtCurrentTime.endSec - activeCaptionAtCurrentTime.startSec);
-                  const elapsed = Math.max(0, currentTime - activeCaptionAtCurrentTime.startSec);
-                  const activeWordIdx = Math.min(
-                    totalWords - 1,
-                    Math.max(0, Math.floor((elapsed / segDuration) * totalWords))
-                  );
-
-                  return (
+                  {/* Live Caption Overlay Layer */}
+                  {activeCaptionAtCurrentTime && activeCaptionAtCurrentTime.text.trim() && (
                     <div
                       onPointerDown={handleCaptionPointerDown}
-                      onTouchStart={handlePreviewTouchStart}
-                      onTouchMove={handlePreviewTouchMove}
-                      onTouchEnd={handlePreviewTouchEnd}
-                      className={`absolute select-none z-20 cursor-move active:cursor-grabbing max-w-[95%] group flex flex-col items-center transition-transform ${
-                        isDraggingCaption || isPinching ? 'scale-105 ring-1 ring-indigo-400/60 rounded-lg p-0.5' : ''
-                      }`}
                       style={{
                         left: `${captionXPercent}%`,
                         top: `${captionYPercent}%`,
                         transform: 'translate(-50%, -50%)',
-                        touchAction: 'none'
                       }}
-                      dir={isPureUrdu ? 'rtl' : 'ltr'}
-                      title="Drag to reposition or pinch with two fingers to resize captions"
+                      className={`absolute z-30 max-w-[90%] text-center cursor-move transition-transform duration-75 select-none ${
+                        isDraggingCaption ? 'ring-2 ring-[#10b981] ring-offset-2 ring-offset-black rounded px-2 py-1 bg-black/40' : ''
+                      }`}
                     >
-                      {/* Real-time 2D coordinates and Font Size indicator */}
-                      <div className={`transition-opacity mb-1 pointer-events-none ${isDraggingCaption || isPinching ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                        <span className="bg-black/85 backdrop-blur border border-zinc-700/80 rounded-full px-2 py-0.5 text-[10px] text-zinc-300 flex items-center gap-1 shadow-md">
-                          <Move className="w-2.5 h-2.5 text-indigo-400" />
-                          <span>X: {captionXPercent}% | Y: {captionYPercent}% • {captionFontSize}px (Pinch to resize)</span>
-                        </span>
-                      </div>
-
-                      {/* Single-line text overlay with ABSOLUTE TRANSPARENCY (No background box/strip, overflow-visible for Nastaliq ligatures) */}
-                      <div
-                        className="inline-flex items-center justify-center whitespace-nowrap overflow-visible px-6 py-2 bg-transparent border-none shadow-none gap-2"
+                      <p
                         style={{
-                          fontFamily: activeFontFamily,
                           fontSize: `${captionFontSize}px`,
-                          lineHeight: isPureUrdu ? '1.8' : '1.2'
+                          color: captionColor,
+                          fontFamily: activeFontFamily,
+                          textShadow: captionStyle === 'White Text with Shadow'
+                            ? '2px 2px 5px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.8)'
+                            : captionStyle === 'Bold Clean'
+                            ? '2px 2px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000'
+                            : 'none',
                         }}
-                        dir={isPureUrdu ? 'rtl' : 'ltr'}
-                      >
-                        {words.map((word, wIdx) => {
-                          const isActive = wIdx === activeWordIdx;
-
-                          // User-specified clean text shadow for perfect readability on light/dark backgrounds
-                          const baseTextShadow = '2px 2px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000';
-
-                          const animClass = isActive
-                            ? animationType === 'pop-bounce'
-                              ? 'anim-pop-bounce'
-                              : animationType === 'fade-in'
-                              ? 'anim-fade-in'
-                              : 'anim-karaoke-jump'
-                            : '';
-
-                          return (
-                            <span
-                              key={wIdx}
-                              className={`inline-block font-black leading-tight transition-all duration-75 whitespace-nowrap ${
-                                isPureUrdu ? 'tracking-normal' : 'uppercase tracking-wide'
-                              } ${animClass}`}
-                              style={{
-                                color: isActive ? '#fde047' : '#ffffff',
-                                textShadow: isActive
-                                  ? `${baseTextShadow}, 0 0 16px rgba(253, 224, 71, 0.8)`
-                                  : baseTextShadow,
-                                fontSize: `${captionFontSize}px`
-                              }}
-                            >
-                              {word}
-                            </span>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-
-            {/* Simple Playback Controls */}
-            <div className="pt-3 flex flex-col gap-2">
-              {/* Progress Scrubber */}
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min="0"
-                  max={duration || 10}
-                  step="0.05"
-                  value={currentTime}
-                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-
-              {/* Control Buttons & Timestamp */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={togglePlay}
-                    className="p-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-white transition-colors cursor-pointer"
-                    title={isPlaying ? 'Pause' : 'Play'}
-                  >
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={toggleMute}
-                    className="p-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                    title={isMuted ? 'Unmute' : 'Mute'}
-                  >
-                    {isMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                  </button>
-
-                  <span className="text-xs font-mono text-zinc-400 ml-1">
-                    {formatSecondsToTime(currentTime)} / {formatSecondsToTime(duration)}
-                  </span>
-                </div>
-
-                <div className="text-xs text-zinc-500 flex items-center gap-1.5">
-                  <Move className="w-3 h-3 text-indigo-400" />
-                  <span>Drag caption anywhere on video to adjust 2D position (X/Y)</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Right Column: Interactive Subtitle Editor (5 cols on desktop) */}
-        <section className="lg:col-span-5 flex flex-col">
-          <div className="bg-[#18181b] border border-zinc-800 rounded-xl p-4 flex flex-col h-full min-h-[460px]">
-            {/* Editor Header & Actions */}
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800 mb-3 flex-wrap gap-2">
-              <div>
-                <h2 className="text-sm font-semibold text-white">Transcript Editor</h2>
-                <p className="text-xs text-zinc-400">Click any block to seek and edit text</p>
-              </div>
-
-              {/* Action Buttons: Add, Split, Delete, and Roman Urdu Formatter */}
-              <div className="flex items-center gap-1.5">
-                {language.includes('Roman Urdu') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCaptions(prev => prev.map(c => ({
-                        ...c,
-                        text: formatRomanUrduPhonetics(c.text)
-                      })));
-                      setStatusMessage('Formatted Roman Urdu speech phonetics (e.g. Zameen, Nazil, Khuloos).');
-                      setStatusType('success');
-                    }}
-                    className="p-1.5 rounded-md bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-800/80 text-indigo-300 hover:text-white text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                    title="Enforce Roman Urdu phonetics on all caption blocks"
-                  >
-                    <Languages className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="hidden sm:inline">Phonetics</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleAddCaption}
-                  className="p-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Add caption at current time"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Add</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSplitCaption}
-                  className="p-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs flex items-center gap-1 transition-colors cursor-pointer"
-                  title="Split caption at playhead"
-                >
-                  <Scissors className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Split</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCaption()}
-                  className="p-1.5 rounded-md bg-zinc-800 hover:bg-red-900/60 text-zinc-400 hover:text-red-300 text-xs transition-colors cursor-pointer"
-                  title="Delete selected clip"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* CREATOR CUSTOMIZATION: Caption Text Size, Motion Animations & Max Words Controls */}
-            <div className="bg-[#121214] border border-zinc-800 rounded-lg p-2.5 mb-3 flex flex-col gap-2.5">
-              {/* Tool 1: Caption Text Size (Pinch directly on preview or fine-tune with slider) */}
-              <div className="flex flex-col gap-1.5 pb-2 border-b border-zinc-800/80">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <Type className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="font-semibold text-zinc-200">Caption Text Size:</span>
-                    <span className="font-mono font-bold text-indigo-400 bg-indigo-950/60 border border-indigo-900/60 px-1.5 py-0.2 rounded text-[11px]">
-                      {captionFontSize}px
-                    </span>
-                  </div>
-                  <span className="text-[10px] text-zinc-400 bg-zinc-800/80 border border-zinc-700/60 px-1.5 py-0.5 rounded">
-                    Pinch on preview to resize
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-500 font-mono">16px</span>
-                  <input
-                    type="range"
-                    min="16"
-                    max="64"
-                    step="1"
-                    value={captionFontSize}
-                    onChange={(e) => setCaptionFontSize(parseInt(e.target.value, 10))}
-                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-                    title="Scale caption text size (or pinch directly on the preview)"
-                  />
-                  <span className="text-[10px] text-zinc-500 font-mono">64px</span>
-                </div>
-              </div>
-
-              {/* Tool 2: Active Word Animation Selector */}
-              <div className="flex items-center justify-between text-xs pb-2 border-b border-zinc-800/80 gap-2">
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <Zap className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="font-semibold text-zinc-200">Word Animation:</span>
-                </div>
-                <select
-                  value={animationType}
-                  onChange={(e) => setAnimationType(e.target.value as CaptionAnimationType)}
-                  className="bg-[#18181b] border border-zinc-700 text-white text-xs rounded-lg px-2 py-1 focus:outline-none focus:border-indigo-500 flex-1 max-w-[200px] cursor-pointer"
-                >
-                  <option value="pop-bounce">Pop / Bounce (Micro-pop)</option>
-                  <option value="fade-in">Fade In (Opacity Rise)</option>
-                  <option value="karaoke-jump">Word Karaoke Jump (Bounce Up)</option>
-                </select>
-              </div>
-
-              {/* Tool 3: Max Words Per Line Slider & Dynamic Split */}
-              <div className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="font-semibold text-zinc-200">Max Words Per Line:</span>
-                    <span className="font-mono font-bold text-indigo-400 bg-indigo-950/60 border border-indigo-900/60 px-1.5 py-0.2 rounded text-[11px]">
-                      {maxWordsPerLine} {maxWordsPerLine === 1 ? 'word' : 'words'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDynamicSplit(maxWordsPerLine)}
-                    className="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-[11px] transition-colors flex items-center gap-1 cursor-pointer"
-                    title="Dynamic split all captions into lines with max words limit"
-                  >
-                    <Scissors className="w-3 h-3" />
-                    <span>Dynamic Split</span>
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-500 font-mono">1</span>
-                  <input
-                    type="range"
-                    min="1"
-                    max="8"
-                    step="1"
-                    value={maxWordsPerLine}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      setMaxWordsPerLine(val);
-                      handleDynamicSplit(val);
-                    }}
-                    className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-                  />
-                  <span className="text-[10px] text-zinc-500 font-mono">8</span>
-                </div>
-              </div>
-
-              {/* Strict Language Mode Indicator Banner */}
-              {language === 'Urdu' && (
-                <div className="px-2 py-1 rounded bg-indigo-950/40 border border-indigo-900/60 text-[11px] text-indigo-300 flex items-center justify-between">
-                  <span>Urdu Mode: Pure Arabic Script • RTL Orientation</span>
-                  <span className="text-[10px] font-mono text-indigo-400">Nastaliq</span>
-                </div>
-              )}
-              {language.includes('Roman Urdu') && (
-                <div className="px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 flex items-center justify-between">
-                  <span>Roman Urdu Mode: Latin Script • Phonetics</span>
-                  <span className="text-[10px] font-mono text-zinc-400">LTR</span>
-                </div>
-              )}
-            </div>
-
-            {/* Real-time Loading Bar while Captions are being generated (Requirement 5) */}
-            {isTranscribing && (
-              <div className="bg-[#121214] border border-indigo-500/50 rounded-xl p-4 mb-3 flex flex-col gap-3 shadow-lg">
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 text-indigo-400 animate-spin" />
-                    <span className="font-semibold text-white">Transcribing Real Audio...</span>
-                  </div>
-                  <span className="font-mono text-xs font-bold text-indigo-400">{transcribeProgress}%</span>
-                </div>
-
-                {/* Animated Gradient Loading Bar */}
-                <div className="w-full bg-zinc-800 rounded-full h-2.5 overflow-hidden border border-zinc-700/60 shadow-inner">
-                  <div
-                    className="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-indigo-400 rounded-full transition-all duration-300"
-                    style={{ width: `${transcribeProgress}%` }}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                  <span className="truncate">{transcribeStatusText || 'Hugging Face Whisper Large v3'}</span>
-                  <span className="font-mono text-indigo-300 shrink-0 font-medium">{language}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Scrollable Transcript List - Display captions ONLY once complete (Requirement 5) */}
-            <div
-              ref={transcriptListRef}
-              className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[420px] lg:max-h-[460px]"
-            >
-              {!isTranscribing && captions.length === 0 && (
-                <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500 rounded-xl border border-dashed border-zinc-800 bg-[#121214]/50 my-auto min-h-[200px]">
-                  <FileText className="w-8 h-8 text-zinc-600 mb-2 stroke-[1.5]" />
-                  <p className="text-xs font-semibold text-zinc-300">No Captions Yet</p>
-                  <p className="text-[11px] text-zinc-500 max-w-[260px] mt-1">
-                    Upload a video (up to 500MB) and click <strong className="text-indigo-400">Generate</strong> to transcribe real spoken audio with Hugging Face Whisper Large v3.
-                  </p>
-                </div>
-              )}
-
-              {!isTranscribing && captions.map((seg, idx) => {
-                const isSelected = seg.id === selectedClipId;
-                const isCurrent = currentTime >= seg.startSec && currentTime <= seg.endSec;
-                const wordCount = seg.text.trim().split(/\s+/).filter(Boolean).length;
-
-                return (
-                  <div
-                    key={seg.id}
-                    onClick={() => handleSelectBlock(seg)}
-                    className={`p-2.5 rounded-lg border transition-all text-sm flex flex-col gap-1.5 cursor-pointer ${
-                      isCurrent
-                        ? 'border-indigo-500/80 bg-indigo-950/20'
-                        : isSelected
-                        ? 'border-zinc-600 bg-zinc-800/80'
-                        : 'border-zinc-800/80 bg-[#121214] hover:border-zinc-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
-                      {/* Time-coded interactive button [mm:ss] */}
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSelectBlock(seg);
-                        }}
-                        className={`font-mono text-xs font-semibold px-2 py-0.5 rounded transition-colors cursor-pointer ${
-                          isCurrent
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                        className={`font-black tracking-tight leading-tight ${
+                          captionStyle === 'Green Highlight' ? 'text-[#10b981]' : ''
                         }`}
-                        title="Click to jump video to this timestamp"
                       >
-                        [{seg.start}] - [{seg.end}]
-                      </button>
+                        {activeCaptionAtCurrentTime.text}
+                      </p>
+                    </div>
+                  )}
+                </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[11px] px-1.5 py-0.2 rounded font-mono ${
-                          wordCount > maxWordsPerLine ? 'text-amber-400 bg-amber-950/40' : 'text-zinc-500'
-                        }`}>
-                          {wordCount} {wordCount === 1 ? 'word' : 'words'}
-                        </span>
-                        <span className="text-[11px] text-zinc-500">#{idx + 1}</span>
+                <p className="text-[12px] text-[#a1a1aa] mt-1 flex items-center justify-between" id="media-name">
+                  <span className="truncate max-w-[280px]">File: {videoFileName || 'Selected Video'}</span>
+                  <span>Duration: {formatSecondsToTime(duration)}</span>
+                </p>
+
+                {/* Subtitle Timeline & Segment List */}
+                {captions.length > 0 && (
+                  <div className="border-t border-[#1f1f23] pt-4 mt-2 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#a1a1aa]">
+                        Subtitles ({captions.length} Clips)
+                      </h3>
+                      <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteCaption(seg.id);
-                          }}
-                          className="text-zinc-600 hover:text-red-400 p-0.5 rounded transition-colors"
-                          title="Delete clip"
+                          onClick={handleAddCaption}
+                          className="bg-[#151519] hover:bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded border border-[#1f1f23] flex items-center gap-1 cursor-pointer"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Plus className="w-3 h-3 text-[#10b981]" />
+                          <span>Add Clip</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSplitCaption}
+                          className="bg-[#151519] hover:bg-[#1f1f23] text-white text-xs px-2.5 py-1 rounded border border-[#1f1f23] flex items-center gap-1 cursor-pointer"
+                        >
+                          <Scissors className="w-3 h-3 text-[#10b981]" />
+                          <span>Split</span>
                         </button>
                       </div>
                     </div>
 
-                    {/* Single-line editable text input */}
-                    <input
-                      type="text"
-                      value={seg.text}
-                      onChange={(e) => handleUpdateText(seg.id, e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Enter subtitle text..."
-                      dir={language === 'Urdu' ? 'rtl' : 'ltr'}
-                      className="w-full bg-transparent text-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded px-1.5 py-1 border border-transparent focus:border-indigo-500 font-medium"
-                      style={{ fontFamily: activeFontFamily }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-      </main>
-
-      {/* SECTION 3: Bottom Configuration Panel (Top 10 Essential Features) */}
-      <footer className="border-t border-zinc-800 bg-[#18181b] p-4 md:p-6 mt-auto">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6">
-          
-          {/* Feature 1: Drag-and-Drop Video Upload Area */}
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              1. Video Source
-            </span>
-            <div
-              onDragOver={(e) => { e.preventDefault(); setIsDraggingVideo(true); }}
-              onDragLeave={(e) => { e.preventDefault(); setIsDraggingVideo(false); }}
-              onDrop={(e) => {
-                e.preventDefault();
-                setIsDraggingVideo(false);
-                const file = e.dataTransfer.files?.[0];
-                if (file) processUploadedFile(file);
-              }}
-              onClick={() => fileInputRef.current?.click()}
-              className={`border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center text-center cursor-pointer transition-colors ${
-                isDraggingVideo
-                  ? 'border-indigo-500 bg-indigo-950/20'
-                  : 'border-zinc-700 hover:border-zinc-500 bg-[#121214]'
-              }`}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="video/*,.mp4,.webm,.mov"
-                onChange={handleFileInputChange}
-                className="hidden"
-              />
-              <Upload className="w-6 h-6 text-zinc-400 mb-1" />
-              <p className="text-xs font-semibold text-white">
-                Drag & drop video here or <span className="text-indigo-400">browse</span>
-              </p>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
-                MP4, WebM, MOV (up to 500MB)
-              </p>
-            </div>
-          </div>
-
-          {/* Feature 2: Typography & Custom Font Styling Panel with Bottom + Button */}
-          <div className="flex flex-col gap-2" ref={fontDropdownRef}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                <Type className="w-3.5 h-3.5 text-indigo-400" />
-                <span>2. Typography & Fonts</span>
-              </span>
-              <span className="text-[10px] text-zinc-500 font-mono">
-                {customFonts.length > 0 ? `${customFonts.length} custom font` : 'English & Urdu/Arabic'}
-              </span>
-            </div>
-
-            <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 flex flex-col gap-2.5 h-full relative">
-              {/* Hidden file selector for font imports */}
-              <input
-                ref={customFontInputRef}
-                type="file"
-                accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
-                onChange={handleImportCustomFont}
-                className="hidden"
-              />
-
-              {/* Font Selector Dropdown Trigger Button */}
-              <div className="flex flex-col gap-1 relative">
-                <label className="text-[11px] text-zinc-400 font-medium">
-                  Caption Font:
-                </label>
-                
-                <button
-                  type="button"
-                  onClick={() => setIsFontDropdownOpen(prev => !prev)}
-                  className="w-full bg-[#18181b] border border-zinc-700 hover:border-zinc-500 text-white text-xs rounded-lg px-3 py-2 flex items-center justify-between transition-colors cursor-pointer text-left shadow-sm"
-                >
-                  <div className="flex items-center gap-2 truncate">
-                    <span className="font-semibold text-white" style={{ fontFamily: activeFontFamily }}>
-                      {selectedFont}
-                    </span>
-                    <span className="text-[10px] text-zinc-500 font-normal">
-                      ({activeFontObj.category})
-                    </span>
-                  </div>
-                  <ChevronDown className={`w-3.5 h-3.5 text-zinc-400 transition-transform ${isFontDropdownOpen ? 'rotate-180 text-white' : ''}`} />
-                </button>
-
-                {/* Dropdown Menu with Dedicated List-Item at Bottom for Custom Import */}
-                {isFontDropdownOpen && (
-                  <div className="absolute top-full left-0 right-0 mt-1 bg-[#18181b] border border-zinc-700 rounded-xl shadow-2xl z-50 overflow-hidden flex flex-col max-h-[340px]">
-                    <div className="overflow-y-auto flex-1 p-1.5 space-y-2">
-                      {/* English Fonts Group */}
-                      <div>
-                        <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                          English Fonts
-                        </div>
-                        <div className="space-y-0.5">
-                          {PRESET_FONTS.filter(f => f.category === 'English').map((font) => (
-                            <button
-                              key={font.name}
-                              type="button"
-                              onClick={() => {
-                                setSelectedFont(font.name);
-                                setIsFontDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                                selectedFont === font.name
-                                  ? 'bg-indigo-600 text-white font-semibold'
-                                  : 'text-zinc-200 hover:bg-zinc-800'
-                              }`}
-                            >
-                              <span style={{ fontFamily: font.family }}>{font.name}</span>
-                              {selectedFont === font.name && <Check className="w-3.5 h-3.5 text-white" />}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Urdu & Arabic Fonts Group */}
-                      <div>
-                        <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-500">
-                          Urdu & Arabic Fonts
-                        </div>
-                        <div className="space-y-0.5">
-                          {PRESET_FONTS.filter(f => f.category === 'Urdu / Arabic').map((font) => (
-                            <button
-                              key={font.name}
-                              type="button"
-                              onClick={() => {
-                                setSelectedFont(font.name);
-                                setIsFontDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                                selectedFont === font.name
-                                  ? 'bg-indigo-600 text-white font-semibold'
-                                  : 'text-zinc-200 hover:bg-zinc-800'
-                              }`}
-                            >
-                              <span style={{ fontFamily: font.family }}>{font.name}</span>
-                              {selectedFont === font.name && <Check className="w-3.5 h-3.5 text-white" />}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Custom Imported Fonts Group (Appears directly above the + item) */}
-                      {customFonts.length > 0 && (
-                        <div>
-                          <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-indigo-400">
-                            ★ Custom Imported Fonts
-                          </div>
-                          <div className="space-y-0.5">
-                            {customFonts.map((font) => (
+                    <div ref={transcriptListRef} className="max-h-[200px] overflow-y-auto pr-1 flex flex-col gap-2">
+                      {captions.map((seg) => {
+                        const isSelected = seg.id === selectedClipId;
+                        const isActiveNow = currentTime >= seg.startSec && currentTime <= seg.endSec;
+                        return (
+                          <div
+                            key={seg.id}
+                            onClick={() => handleSelectBlock(seg)}
+                            className={`p-2.5 rounded-lg border text-xs transition-all cursor-pointer flex flex-col gap-1.5 ${
+                              isSelected
+                                ? 'bg-[#151519] border-[#10b981] shadow-[0_0_10px_rgba(16,185,129,0.2)]'
+                                : isActiveNow
+                                ? 'bg-[#151519]/80 border-[#10b981]/50'
+                                : 'bg-[#000000] border-[#1f1f23] hover:border-[#1f1f23]/80'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-[11px] text-[#a1a1aa]">
+                              <span className="font-mono text-[#10b981] font-semibold">{seg.start} → {seg.end}</span>
                               <button
-                                key={font.name}
                                 type="button"
-                                onClick={() => {
-                                  setSelectedFont(font.name);
-                                  setIsFontDropdownOpen(false);
-                                }}
-                                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs text-left transition-colors cursor-pointer ${
-                                  selectedFont === font.name
-                                    ? 'bg-indigo-600 text-white font-semibold'
-                                    : 'text-zinc-200 hover:bg-zinc-800'
-                                }`}
+                                onClick={(e) => { e.stopPropagation(); handleDeleteCaption(seg.id); }}
+                                className="text-[#a1a1aa] hover:text-red-400 p-0.5 cursor-pointer"
                               >
-                                <span style={{ fontFamily: font.family }}>{font.name}</span>
-                                {selectedFont === font.name && <Check className="w-3.5 h-3.5 text-white" />}
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
-                            ))}
+                            </div>
+                            <input
+                              type="text"
+                              value={seg.text}
+                              onChange={(e) => handleUpdateText(seg.id, e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-full bg-[#000000] border border-[#1f1f23] text-white px-2 py-1 rounded text-xs focus:border-[#10b981] outline-none"
+                              style={{ fontFamily: activeFontFamily }}
+                            />
                           </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* DEDICATED LIST-ITEM AT VERY BOTTOM WITH "+" ICON BUTTON */}
-                    <div className="p-1.5 border-t border-zinc-800 bg-[#121214] sticky bottom-0">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsFontDropdownOpen(false);
-                          customFontInputRef.current?.click();
-                        }}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-semibold transition-all shadow-sm cursor-pointer"
-                        title="Import a custom font file (.ttf, .otf, .woff2)"
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>Import Custom Font</span>
-                      </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="text-[10px] text-zinc-500 leading-tight pt-1">
-                Transparent shadow enabled: No background box strip. Click "+" in dropdown to load .ttf, .otf, or .woff2.
-              </div>
-            </div>
-          </div>
+              {/* Right Panel: Caption Studio Configuration */}
+              <div className="bg-[#0a0a0c] border border-[#1f1f23] p-6 rounded-2xl flex flex-col gap-5">
+                <h2 className="text-[18px] font-bold text-white flex items-center gap-2 pb-2 border-b border-[#1f1f23]">
+                  <Sparkles className="w-4 h-4 text-[#10b981]" />
+                  <span>Caption Studio Configuration</span>
+                </h2>
 
-          {/* Feature 3: Caption Output Language & AI Generation */}
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              3. Caption Output Language & AI
-            </span>
-
-            <div className="bg-[#121214] border border-zinc-800 rounded-xl p-3 flex flex-col gap-2.5 h-full">
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-zinc-400 font-medium">
-                  Caption Output Language:
-                </label>
-                <div className="flex items-center gap-2">
+                {/* Form Row 1: Language */}
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="caption-language" className="text-[13px] font-[600] text-[#a1a1aa]">Caption Language</label>
                   <select
+                    id="caption-language"
                     value={language}
-                    onChange={(e) => {
-                      const newLang = e.target.value;
-                      setLanguage(newLang);
-                      if (newLang === 'Urdu') {
-                        setSelectedFont('Noto Nastaliq Urdu');
-                        setStatusMessage('Urdu Mode: Set to authentic Arabic-script Urdu with Noto Nastaliq typography and RTL orientation.');
-                      } else if (newLang.includes('Roman Urdu')) {
-                        setStatusMessage('Roman Urdu Mode: Set to Latin English alphabet speech phonetics (e.g. Zameen, Nazil).');
-                      } else {
-                        setStatusMessage(`Caption Output Language set to ${newLang}.`);
-                      }
-                      setStatusType('info');
-                    }}
-                    className="bg-[#18181b] border border-zinc-700 text-white text-xs rounded-lg px-2.5 py-2 focus:outline-none focus:border-indigo-500 flex-1 cursor-pointer"
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full bg-[#000000] border border-[#1f1f23] text-white p-3 rounded-lg text-[14px] outline-none focus:border-[#10b981] transition-colors cursor-pointer"
                   >
                     {SUPPORTED_LANGUAGES.map((lang) => (
-                      <option key={lang} value={lang}>
-                        {lang === 'Urdu' ? 'Urdu (Authentic Arabic Script)' : lang === 'Roman Urdu' ? 'Roman Urdu (Latin English Letters)' : lang}
-                      </option>
+                      <option key={lang} value={lang}>{lang}</option>
                     ))}
                   </select>
+                </div>
 
+                {/* Form Row 2: Font Size */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-center">
+                    <label htmlFor="font-size" className="text-[13px] font-[600] text-[#a1a1aa]">Font Size (px)</label>
+                    <span className="text-xs text-[#10b981] font-mono">{captionFontSize}px</span>
+                  </div>
+                  <input
+                    id="font-size"
+                    type="number"
+                    value={captionFontSize}
+                    min={10}
+                    max={80}
+                    onChange={(e) => setCaptionFontSize(Math.max(10, Math.min(80, parseInt(e.target.value) || 25)))}
+                    className="w-full bg-[#000000] border border-[#1f1f23] text-white p-3 rounded-lg text-[14px] outline-none focus:border-[#10b981] transition-colors"
+                  />
+                </div>
+
+                {/* Form Row 3: Caption Style */}
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="caption-style" className="text-[13px] font-[600] text-[#a1a1aa]">Caption Style</label>
+                  <select
+                    id="caption-style"
+                    value={captionStyle}
+                    onChange={(e) => setCaptionStyle(e.target.value)}
+                    className="w-full bg-[#000000] border border-[#1f1f23] text-white p-3 rounded-lg text-[14px] outline-none focus:border-[#10b981] transition-colors cursor-pointer"
+                  >
+                    <option value="Bold Clean">Bold Clean</option>
+                    <option value="Minimal">Minimal</option>
+                    <option value="White Text with Shadow">White Text with Shadow</option>
+                    <option value="Green Highlight">Green Highlight</option>
+                  </select>
+                </div>
+
+                {/* Form Row 4: Caption Color */}
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="caption-color" className="text-[13px] font-[600] text-[#a1a1aa]">Caption Color</label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      id="caption-color"
+                      type="color"
+                      value={captionColor}
+                      onChange={(e) => setCaptionColor(e.target.value)}
+                      className="w-12 h-10 bg-[#000000] border border-[#1f1f23] p-1 rounded-lg cursor-pointer"
+                    />
+                    <span className="font-mono text-xs text-[#a1a1aa] uppercase">{captionColor}</span>
+                  </div>
+                </div>
+
+                {/* Form Row 5: Caption Position */}
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="caption-position" className="text-[13px] font-[600] text-[#a1a1aa]">Caption Position</label>
+                  <select
+                    id="caption-position"
+                    value={captionPosition}
+                    onChange={(e) => handlePositionChange(e.target.value)}
+                    className="w-full bg-[#000000] border border-[#1f1f23] text-white p-3 rounded-lg text-[14px] outline-none focus:border-[#10b981] transition-colors cursor-pointer"
+                  >
+                    <option value="Bottom">Bottom</option>
+                    <option value="Center">Center</option>
+                    <option value="Top">Top</option>
+                  </select>
+                </div>
+
+                {/* Form Row 6: Font Family & Custom Font Upload */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[13px] font-[600] text-[#a1a1aa]">Font Family</label>
+                    <button
+                      type="button"
+                      onClick={() => customFontInputRef.current?.click()}
+                      className="text-xs text-[#10b981] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <FolderUp className="w-3 h-3" />
+                      <span>+ Custom Font</span>
+                    </button>
+                    <input
+                      type="file"
+                      ref={customFontInputRef}
+                      accept=".ttf,.otf,.woff,.woff2"
+                      className="hidden"
+                      onChange={handleImportCustomFont}
+                    />
+                  </div>
+                  <select
+                    value={selectedFont}
+                    onChange={(e) => setSelectedFont(e.target.value)}
+                    className="w-full bg-[#000000] border border-[#1f1f23] text-white p-3 rounded-lg text-[14px] outline-none focus:border-[#10b981] transition-colors cursor-pointer"
+                  >
+                    {allFonts.map((f) => (
+                      <option key={f.name} value={f.name}>{f.name} ({f.category})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap gap-2.5 mt-2 pt-2 border-t border-[#1f1f23]">
                   <button
                     type="button"
                     onClick={handleGenerateCaptions}
                     disabled={isTranscribing}
-                    className="bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-sm"
+                    className="flex-1 bg-[#10b981] hover:bg-[#059669] text-black font-[700] py-3.5 px-5 rounded-lg text-[15px] cursor-pointer transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                   >
                     {isTranscribing ? (
                       <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Transcribing...</span>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Generating...</span>
                       </>
                     ) : (
                       <>
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Generate</span>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Generate Captions</span>
                       </>
                     )}
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={handleExportBurnedVideo}
+                    disabled={isExporting}
+                    className="bg-[#151519] hover:bg-[#1f1f23] text-white font-[600] border border-[#1f1f23] hover:border-[#10b981] py-3 px-4 rounded-lg text-[14px] cursor-pointer transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-[#10b981]" />}
+                    <span>Export Video</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={resetStudio}
+                    className="bg-[#151519] hover:bg-red-950/40 text-white font-[600] border border-[#1f1f23] hover:border-red-800 py-3 px-4 rounded-lg text-[14px] cursor-pointer transition-colors"
+                  >
+                    Remove Media
+                  </button>
                 </div>
-              </div>
 
-              {/* Strict Pure Urdu Banner */}
-              {language === 'Urdu' && (
-                <div className="px-2.5 py-1.5 rounded-lg bg-indigo-950/40 border border-indigo-900/60 text-[11px] text-indigo-300 flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
-                    <span className="truncate">Pure Urdu (Arabic Script): RTL Nastaliq layout active.</span>
-                  </div>
-                  <span className="font-mono text-[10px] text-indigo-400 shrink-0 font-semibold">اردو رسم الخط</span>
+                {/* Subtitle File Exports & Copy */}
+                <div className="flex items-center gap-2 pt-2 border-t border-[#1f1f23]">
+                  <button
+                    type="button"
+                    onClick={() => handleExportSubtitleFile('srt')}
+                    className="flex-1 bg-[#151519] hover:bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-xs py-2 px-2 rounded-lg font-medium border border-[#1f1f23] flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[#10b981]" />
+                    <span>.SRT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExportSubtitleFile('vtt')}
+                    className="flex-1 bg-[#151519] hover:bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-xs py-2 px-2 rounded-lg font-medium border border-[#1f1f23] flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <FileText className="w-3.5 h-3.5 text-[#10b981]" />
+                    <span>.VTT</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyCaptions}
+                    className="bg-[#151519] hover:bg-[#1f1f23] text-[#a1a1aa] hover:text-white text-xs py-2 px-3 rounded-lg font-medium border border-[#1f1f23] flex items-center gap-1 cursor-pointer"
+                  >
+                    {copySuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copySuccess ? 'Copied' : 'Copy'}</span>
+                  </button>
                 </div>
-              )}
 
-              {/* Strict Roman Urdu Banner */}
-              {language.includes('Roman Urdu') && (
-                <div className="px-2.5 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-300 flex items-center justify-between gap-1.5">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <Languages className="w-3 h-3 text-indigo-400 shrink-0" />
-                    <span className="truncate">Roman Urdu: Latin English characters (e.g. Zameen, Nazil).</span>
-                  </div>
-                  <span className="font-mono text-[10px] text-zinc-400 shrink-0 font-semibold">LATIN</span>
-                </div>
-              )}
-
-              {/* Subtitle File Exports & Copy */}
-              <div className="flex items-center gap-2 pt-1 mt-auto">
-                <button
-                  type="button"
-                  onClick={() => handleExportSubtitleFile('srt')}
-                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs py-1.5 px-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>.SRT</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleExportSubtitleFile('vtt')}
-                  className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs py-1.5 px-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                  <span>.VTT</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleCopyCaptions}
-                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs py-1.5 px-2.5 rounded-lg font-medium transition-colors flex items-center gap-1 cursor-pointer"
-                  title="Copy all captions"
-                >
-                  {copySuccess ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copySuccess ? 'Copied' : 'Copy'}</span>
-                </button>
+                <p className="text-[12px] text-[#a1a1aa] mt-1 leading-[1.5]">
+                  Connected to Gemini 2.5 Flash / Hugging Face Whisper API for speech recognition.
+                </p>
               </div>
             </div>
-          </div>
+          </section>
+        )}
 
+        {/* FAQ & About Section */}
+        <section className="mt-[80px] border-t border-[#1f1f23] pt-[50px]" id="faq-section">
+          <h2 className="text-center text-[26px] font-bold mb-[30px] text-white">Frequently Asked Questions</h2>
+          <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl mb-[15px]">
+            <h3 className="text-[15px] font-semibold mb-1.5 text-white">Can I upload my own video?</h3>
+            <p className="text-[13px] text-[#a1a1aa] leading-[1.5]">Yes. Select Import Media to choose a video or audio file from your device up to 500MB.</p>
+          </div>
+          <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl mb-[15px]">
+            <h3 className="text-[15px] font-semibold mb-1.5 text-white">Which languages are listed?</h3>
+            <p className="text-[13px] text-[#a1a1aa] leading-[1.5]">The studio includes full optimization support for English, Urdu, Roman Urdu, Arabic, Hindi, Spanish, and 7+ other languages.</p>
+          </div>
+          <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl mb-[15px]" id="about-section">
+            <h3 className="text-[15px] font-semibold mb-1.5 text-white">About Caption Free</h3>
+            <p className="text-[13px] text-[#a1a1aa] leading-[1.5]">Caption Free is an AI caption studio interface for importing media, generating automatic speech captions, and customizing layout appearance for short-form content.</p>
+          </div>
+        </section>
+      </main>
+
+      {/* Processing Overlay Modal */}
+      {(isTranscribing || isExporting) && (
+        <div className="fixed inset-0 w-full h-full bg-black/98 z-[1000] flex flex-col justify-center items-center p-4">
+          <h2 className="text-2xl font-bold text-white mb-2">
+            {isTranscribing ? 'Generating AI Captions...' : 'Exporting Video...'}
+          </h2>
+          <div className="w-[280px] bg-[#111115] h-[6px] rounded-[3px] my-[20px] overflow-hidden border border-[#1f1f23]">
+            <div
+              style={{ width: `${isTranscribing ? transcribeProgress : exportProgress}%` }}
+              className="h-full bg-[#10b981] transition-all duration-200"
+            />
+          </div>
+          <p className="text-sm text-[#a1a1aa]">
+            {isTranscribing ? transcribeStatusText : `Encoding full video duration (${exportProgress}%)`}
+          </p>
         </div>
-      </footer>
+      )}
     </div>
   );
 }

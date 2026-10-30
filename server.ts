@@ -150,18 +150,34 @@ async function startServer() {
       });
     } catch (sdkErr: any) {
       console.warn("[Whisper API] SDK notice, connecting directly to Hugging Face Inference router:", sdkErr.message);
-      const directRes = await fetch('https://api-inference.huggingface.co/models/openai/whisper-large-v3', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${hfToken}`,
-          'Content-Type': 'audio/wav',
-          'x-wait-for-model': 'true'
-        },
-        body: new Uint8Array(audioBuffer)
-      });
-      if (!directRes.ok) {
-        const errorText = await directRes.text();
-        throw new Error(`Hugging Face Whisper API returned ${directRes.status}: ${errorText}`);
+      const hfEndpoints = [
+        'https://router.huggingface.co/hf-inference/v1/models/openai/whisper-large-v3',
+        'https://api-inference.huggingface.co/models/openai/whisper-large-v3'
+      ];
+      let directRes: Response | null = null;
+      let lastFetchErr: any = null;
+
+      for (const endpoint of hfEndpoints) {
+        try {
+          directRes = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${hfToken}`,
+              'Content-Type': 'audio/wav',
+              'x-wait-for-model': 'true'
+            },
+            body: new Uint8Array(audioBuffer)
+          });
+          if (directRes.ok) break;
+        } catch (fErr: any) {
+          console.warn(`[Whisper API] Endpoint ${endpoint} notice:`, fErr.message);
+          lastFetchErr = fErr;
+        }
+      }
+
+      if (!directRes || !directRes.ok) {
+        const errorText = directRes ? await directRes.text() : (lastFetchErr?.message || 'Network unreachable');
+        throw new Error(`Hugging Face Whisper API returned error: ${errorText}`);
       }
       whisperRes = await directRes.json();
     }
@@ -254,14 +270,13 @@ async function startServer() {
     return formattedSegments;
   }
 
-  // Transcribe audio using Google Gemini 2.5 Flash as high-fidelity AI fallback
+  // Transcribe audio using Google Gemini API with fallback model candidates
   async function processGeminiAudio(audioBuffer: Buffer, language: string) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('MISSING_API_KEYS');
     }
 
-    console.log(`[Gemini API] Transcribing audio with gemini-2.5-flash (${language})...`);
     const base64Audio = audioBuffer.toString('base64');
     const prompt = `You are an expert speech transcription system.
 Transcribe the speech in this audio track into short, timestamped ${language} captions.
@@ -277,16 +292,36 @@ Rules:
 3. If language is Urdu, write in clean Unicode Urdu script.
 4. If language is Roman Urdu, write in Latin phonetic alphabet.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: [
-        { inlineData: { mimeType: 'audio/wav', data: base64Audio } },
-        { text: prompt }
-      ],
-      config: {
-        responseMimeType: 'application/json'
+    const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    let response: any = null;
+    let lastErr: any = null;
+
+    for (const modelName of GEMINI_MODELS) {
+      try {
+        console.log(`[Gemini API] Trying model candidate ${modelName} (${language})...`);
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: [
+            { inlineData: { mimeType: 'audio/wav', data: base64Audio } },
+            { text: prompt }
+          ],
+          config: {
+            responseMimeType: 'application/json'
+          }
+        });
+        if (response?.text) {
+          console.log(`[Gemini API] Successfully transcribed audio with ${modelName}!`);
+          break;
+        }
+      } catch (err: any) {
+        console.warn(`[Gemini API] Model ${modelName} notice:`, err?.message || err);
+        lastErr = err;
       }
-    });
+    }
+
+    if (!response || !response.text) {
+      throw lastErr || new Error('All Gemini Flash model candidates failed to transcribe audio');
+    }
 
     const text = (response.text || '').trim();
     if (!text) return [];

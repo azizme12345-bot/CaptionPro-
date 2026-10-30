@@ -367,35 +367,38 @@ async function verifyBlobDuration(blob: Blob): Promise<number> {
   });
 }
 
-// Helper to get exact finite duration from video element
+// Helper to get exact finite duration from video element without mutating active currentTime
 async function getExactVideoDuration(videoEl: HTMLVideoElement): Promise<number> {
   if (videoEl.duration && isFinite(videoEl.duration) && videoEl.duration > 0) {
     return videoEl.duration;
   }
   return new Promise<number>((resolve) => {
+    const tempVid = document.createElement('video');
+    tempVid.preload = 'metadata';
     let resolved = false;
+
     const cleanup = (dur: number) => {
       if (!resolved) {
         resolved = true;
-        videoEl.removeEventListener('timeupdate', onTime);
         resolve(isFinite(dur) && dur > 0 ? dur : 0);
       }
     };
 
-    const onTime = () => {
-      if (videoEl.duration && isFinite(videoEl.duration) && videoEl.duration > 0) {
-        cleanup(videoEl.duration);
+    tempVid.onloadedmetadata = () => {
+      if (tempVid.duration && isFinite(tempVid.duration) && tempVid.duration > 0) {
+        cleanup(tempVid.duration);
       }
     };
 
-    videoEl.addEventListener('timeupdate', onTime);
-    const originalTime = videoEl.currentTime;
-    videoEl.currentTime = 1e101;
+    tempVid.onerror = () => cleanup(0);
 
-    setTimeout(() => {
-      videoEl.currentTime = originalTime;
-      cleanup(videoEl.duration || 0);
-    }, 400);
+    if (videoEl.src) {
+      tempVid.src = videoEl.src;
+    } else {
+      cleanup(0);
+    }
+
+    setTimeout(() => cleanup(videoEl.duration || 0), 800);
   });
 }
 
@@ -1243,14 +1246,14 @@ export default function App() {
           }
         }, 500);
       });
-      
+
+      // Determine exact video duration (e.g. 60s or 5 mins) before starting recorder
+      const exactDuration = await getExactVideoDuration(video);
+      const targetDuration = Math.max(exactDuration, video.duration || 0, duration || 0, 5);
+
       // Start recording with 250ms timeslice to collect chunks continuously
       recorder.start(250);
       await video.play().catch(() => {});
-
-      // Determine exact video duration (e.g. 60s or 5 mins) to guarantee full playback
-      const exactDuration = await getExactVideoDuration(video);
-      const targetDuration = Math.max(exactDuration, video.duration || 0, duration || 0, 5);
 
       // Real-time frame loop ensuring full video duration is recorded without premature cutoff
       await new Promise<void>((resolve) => {

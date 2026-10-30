@@ -254,7 +254,77 @@ async function startServer() {
     return formattedSegments;
   }
 
-  // API Endpoint for video transcription using Hugging Face Whisper Large v3
+  // Transcribe audio using Google Gemini 2.5 Flash as high-fidelity AI fallback
+  async function processGeminiAudio(audioBuffer: Buffer, language: string) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('MISSING_API_KEYS');
+    }
+
+    console.log(`[Gemini API] Transcribing audio with gemini-2.5-flash (${language})...`);
+    const base64Audio = audioBuffer.toString('base64');
+    const prompt = `You are an expert speech transcription system.
+Transcribe the speech in this audio track into short, timestamped ${language} captions.
+Format your output as a JSON array of caption objects.
+Each object MUST have:
+- "start": string in "MM:SS" format (e.g. "00:00")
+- "end": string in "MM:SS" format (e.g. "00:03")
+- "text": string (maximum 5 words per line)
+
+Rules:
+1. Return strictly a JSON array without markdown formatting.
+2. Ensure timestamps match the natural pace of the speech.
+3. If language is Urdu, write in clean Unicode Urdu script.
+4. If language is Roman Urdu, write in Latin phonetic alphabet.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        { inlineData: { mimeType: 'audio/wav', data: base64Audio } },
+        { text: prompt }
+      ],
+      config: {
+        responseMimeType: 'application/json'
+      }
+    });
+
+    const text = (response.text || '').trim();
+    if (!text) return [];
+
+    let parsed: any[] = [];
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+      parsed = JSON.parse(cleanJson);
+    }
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.map((item: any, idx: number) => {
+      const startSec = parseSecToFloat(item.start);
+      const endSec = parseSecToFloat(item.end) || (startSec + 2.5);
+      return {
+        id: `gemini-seg-${idx + 1}`,
+        start: typeof item.start === 'string' && item.start.includes(':') ? item.start : formatSecToMMSS(startSec),
+        end: typeof item.end === 'string' && item.end.includes(':') ? item.end : formatSecToMMSS(endSec),
+        startSec,
+        endSec: Math.max(startSec + 0.5, endSec),
+        text: (item.text || '').trim()
+      };
+    });
+  }
+
+  function parseSecToFloat(val: any): number {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string' && val.includes(':')) {
+      const parts = val.split(':');
+      return (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+    }
+    return parseFloat(val) || 0;
+  }
+
+  // API Endpoint for video transcription using Hugging Face Whisper Large v3 or Google Gemini 2.5 Flash
   app.post(['/api/transcribe-video', '/api/captions', '/api/generate-captions'], handleUpload, async (req, res) => {
     let filePath = req.file?.path;
     let extractedWavPath = '';
@@ -285,19 +355,30 @@ async function startServer() {
         return res.status(400).json({ error: 'NO_AUDIO', message: 'No audio data or video file received for transcription.' });
       }
 
-      const captions = await processWhisperAudio(audioBuffer, language);
+      let captions = [];
+      if (process.env.HF_TOKEN) {
+        try {
+          captions = await processWhisperAudio(audioBuffer, language);
+        } catch (whisperErr) {
+          console.warn("[Whisper API Notice] Falling back to Gemini 2.5 Flash transcription:", whisperErr);
+          captions = await processGeminiAudio(audioBuffer, language);
+        }
+      } else {
+        captions = await processGeminiAudio(audioBuffer, language);
+      }
+
       return res.json({ captions, count: captions.length });
     } catch (err: any) {
       console.error("[Transcription Error]", err);
-      if (err.message === 'MISSING_HF_TOKEN' || err.code === 'MISSING_HF_TOKEN') {
+      if (err.message === 'MISSING_API_KEYS') {
         return res.status(400).json({
-          error: 'MISSING_HF_TOKEN',
-          message: 'Hugging Face API token (HF_TOKEN) is not configured in the server environment variables. Please set HF_TOKEN to transcribe video audio with Hugging Face Whisper.'
+          error: 'MISSING_API_KEYS',
+          message: 'Neither HF_TOKEN nor GEMINI_API_KEY is configured in server environment variables. Please set HF_TOKEN or GEMINI_API_KEY.'
         });
       }
       return res.status(500).json({
-        error: 'WHISPER_TRANSCRIPTION_FAILED',
-        message: err.message || 'Hugging Face Whisper transcription failed'
+        error: 'TRANSCRIPTION_FAILED',
+        message: err.message || 'Speech recognition failed'
       });
     } finally {
       try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) {}

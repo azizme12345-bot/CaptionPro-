@@ -1,6 +1,6 @@
 {
-  "name": "CaptionPro – AI Video Caption Editor",
-  "description": "Auto-generate animated subtitles and captions for TikTok, YouTube Shorts, and Instagram Reels with audio preservation and multi-language support.",
+  "name": "CaptionPro – AI Video Caption & Subtitle Studio",
+  "description": "Generate animated captions and subtitles for TikTok, YouTube Shorts, and Instagram Reels. Add custom text layers, professional kinetic animations, import custom fonts, and export full duration videos.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

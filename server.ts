@@ -115,12 +115,17 @@ async function startServer() {
     'Russian': 'ru'
   };
 
-  // Helper to format seconds into MM:SS timestamp
+  // Helper to format seconds into MM:SS or MM:SS.s timestamp with high precision
   function formatSecToMMSS(sec: number): string {
     const safeSec = Math.max(0, isNaN(sec) ? 0 : sec);
     const m = Math.floor(safeSec / 60);
-    const s = Math.floor(safeSec % 60);
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    const s = safeSec % 60;
+    const wholeS = Math.floor(s);
+    const tenths = Math.floor((s % 1) * 10);
+    if (tenths > 0) {
+      return `${String(m).padStart(2, '0')}:${String(wholeS).padStart(2, '0')}.${tenths}`;
+    }
+    return `${String(m).padStart(2, '0')}:${String(wholeS).padStart(2, '0')}`;
   }
 
   // Transcribe audio strictly using Hugging Face Whisper API (openai/whisper-large-v3)
@@ -278,17 +283,17 @@ async function startServer() {
     }
 
     const base64Audio = audioBuffer.toString('base64');
-    const prompt = `You are an expert speech transcription system.
-Transcribe the speech in this audio track into short, timestamped ${language} captions.
-Format your output as a JSON array of caption objects.
+    const prompt = `You are an expert speech transcription and timing synchronization system.
+Listen to the audio carefully and transcribe all spoken words into short, punchy ${language} captions.
+Format your output strictly as a JSON array of caption objects.
 Each object MUST have:
-- "start": string in "MM:SS" format (e.g. "00:00")
-- "end": string in "MM:SS" format (e.g. "00:03")
-- "text": string (maximum 5 words per line)
+- "startSec": number (exact second the spoken phrase starts, as a float with 2 decimal places e.g. 1.25)
+- "endSec": number (exact second the spoken phrase finishes, as a float with 2 decimal places e.g. 2.40)
+- "text": string (short natural phrase, 2 to 5 words max)
 
 Rules:
-1. Return strictly a JSON array without markdown formatting.
-2. Ensure timestamps match the natural pace of the speech.
+1. "startSec" and "endSec" MUST accurately match the speaker's vocal timing with sub-second accuracy. Captions must appear the moment words are voiced and disappear when speech stops.
+2. Return strictly a JSON array without markdown formatting.
 3. If language is Urdu, write in clean Unicode Urdu script.
 4. If language is Roman Urdu, write in Latin phonetic alphabet.`;
 
@@ -337,24 +342,40 @@ Rules:
     if (!Array.isArray(parsed)) return [];
 
     return parsed.map((item: any, idx: number) => {
-      const startSec = parseSecToFloat(item.start);
-      const endSec = parseSecToFloat(item.end) || (startSec + 2.5);
+      let startSec = typeof item.startSec === 'number'
+        ? item.startSec
+        : parseSecToFloat(item.start);
+      let endSec = typeof item.endSec === 'number'
+        ? item.endSec
+        : parseSecToFloat(item.end);
+
+      if (isNaN(startSec) || startSec < 0) startSec = 0;
+      if (isNaN(endSec) || endSec <= startSec) endSec = startSec + 1.8;
+
+      startSec = parseFloat(startSec.toFixed(2));
+      endSec = parseFloat(endSec.toFixed(2));
+
       return {
         id: `gemini-seg-${idx + 1}`,
-        start: typeof item.start === 'string' && item.start.includes(':') ? item.start : formatSecToMMSS(startSec),
-        end: typeof item.end === 'string' && item.end.includes(':') ? item.end : formatSecToMMSS(endSec),
+        start: formatSecToMMSS(startSec),
+        end: formatSecToMMSS(endSec),
         startSec,
-        endSec: Math.max(startSec + 0.5, endSec),
+        endSec: Math.max(startSec + 0.3, endSec),
         text: (item.text || '').trim()
       };
     });
   }
 
   function parseSecToFloat(val: any): number {
-    if (typeof val === 'number') return val;
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
     if (typeof val === 'string' && val.includes(':')) {
       const parts = val.split(':');
-      return (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+      if (parts.length === 2) {
+        return (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+      }
+      if (parts.length === 3) {
+        return (parseFloat(parts[0]) || 0) * 3600 + (parseFloat(parts[1]) || 0) * 60 + (parseFloat(parts[2]) || 0);
+      }
     }
     return parseFloat(val) || 0;
   }
@@ -531,27 +552,34 @@ Rules:
       outputPath = path.join(uploadDir, `exported-${Date.now()}.mp4`);
       fs.writeFileSync(srtPath, srtContent, 'utf-8');
 
-      console.log(`[Export] Rendering full-duration video with ${captions.length} captions. Input: ${inputPath}`);
+      const hasSubtitles = srtContent.trim().length > 0;
+      console.log(`[Export] Rendering full-duration video with ${captions.length} captions (hasSubtitles: ${hasSubtitles}). Input: ${inputPath}`);
 
       await new Promise((resolve, reject) => {
         const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\\\''");
+        const primaryOpts = [
+          '-c:v', 'libx264',
+          '-preset', 'ultrafast',
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          '-avoid_negative_ts', 'make_zero',
+          '-fflags', '+genpts',
+          '-map', '0:v:0',
+          '-map', '0:a?',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-max_muxing_queue_size', '2048'
+        ];
+
+        if (hasSubtitles) {
+          primaryOpts.unshift('-vf', `subtitles='${escapedSrtPath}'`);
+        }
         
         ffmpeg(inputPath)
-          .outputOptions([
-            '-vf', `subtitles='${escapedSrtPath}'`,
-            '-c:v', 'libx264',
-            '-preset', 'ultrafast',
-            '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart',
-            '-map', '0:v:0',
-            '-map', '0:a?',
-            '-c:a', 'aac',
-            '-b:a', '128k',
-            '-max_muxing_queue_size', '1024'
-          ])
+          .outputOptions(primaryOpts)
           .save(outputPath)
           .on('end', () => {
-            console.log("[Export] FFmpeg rendering completed successfully with ultrafast preset.");
+            console.log("[Export] FFmpeg rendering completed successfully with full duration and faststart.");
             resolve(true);
           })
           .on('error', (err: any) => {
@@ -563,6 +591,8 @@ Rules:
                 '-preset', 'ultrafast',
                 '-pix_fmt', 'yuv420p',
                 '-movflags', '+faststart',
+                '-avoid_negative_ts', 'make_zero',
+                '-fflags', '+genpts',
                 '-map', '0:v:0',
                 '-map', '0:a?',
                 '-c:a', 'aac',

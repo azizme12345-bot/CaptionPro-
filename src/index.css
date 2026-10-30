@@ -95,6 +95,69 @@ input[type="range"] {
   animation: captionKaraokeJump 0.24s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
+/* Preset 4: Neon Glow Pulse (TikTok cyberpunk / EDM creator highlight) */
+@keyframes captionNeonPulse {
+  0% {
+    text-shadow: 0 0 4px #10b981, 0 0 10px #10b981;
+    transform: scale(1);
+  }
+  50% {
+    text-shadow: 0 0 10px #10b981, 0 0 20px #10b981, 0 0 35px #34d399;
+    transform: scale(1.12);
+  }
+  100% {
+    text-shadow: 0 0 8px #10b981, 0 0 16px #10b981, 0 0 25px #34d399;
+    transform: scale(1.08);
+  }
+}
+.anim-neon-pulse {
+  animation: captionNeonPulse 0.25s ease-out forwards;
+}
+
+/* Preset 5: CapCut Marker Highlight (dynamic rounded background highlight box) */
+@keyframes captionMarkerSlide {
+  0% {
+    background-color: transparent;
+    padding-left: 2px;
+    padding-right: 2px;
+    border-radius: 4px;
+    transform: scale(0.95);
+  }
+  100% {
+    background-color: #10b981;
+    color: #000000 !important;
+    padding-left: 8px;
+    padding-right: 8px;
+    border-radius: 6px;
+    transform: scale(1.06);
+    box-shadow: 0 2px 12px rgba(16, 185, 129, 0.4);
+  }
+}
+.anim-marker-box {
+  animation: captionMarkerSlide 0.18s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+
+/* Preset 6: Gold Flash (viral YouTube Shorts & Hormozi keyword emphasis) */
+@keyframes captionGoldFlash {
+  0% {
+    color: #ffffff;
+    transform: scale(1);
+  }
+  50% {
+    color: #facc15;
+    transform: scale(1.16);
+    text-shadow: 0 0 15px rgba(250, 204, 21, 0.8);
+  }
+  100% {
+    color: #facc15;
+    transform: scale(1.1);
+    text-shadow: 0 0 8px rgba(250, 204, 21, 0.5);
+  }
+}
+.anim-flash-gold {
+  animation: captionGoldFlash 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
 /* Export Animated Preview (CapCut / VN Laser Scanning Wave & Glow) */
 @keyframes exportScanWave {
   0% {
@@ -115,5 +178,25 @@ input[type="range"] {
 
 .anim-export-scan {
   animation: exportScanWave 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* CapCut Animated Border & Wink Glow */
+@keyframes capcutBorderPulse {
+  0% {
+    box-shadow: 0 0 25px rgba(16, 185, 129, 0.25), 0 0 50px rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 45px rgba(16, 185, 129, 0.5), 0 0 70px rgba(16, 185, 129, 0.25);
+    border-color: rgba(52, 211, 153, 0.9);
+  }
+  100% {
+    box-shadow: 0 0 25px rgba(16, 185, 129, 0.25), 0 0 50px rgba(16, 185, 129, 0.1);
+    border-color: rgba(16, 185, 129, 0.5);
+  }
+}
+
+.capcut-border-glow {
+  animation: capcutBorderPulse 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 

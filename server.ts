@@ -371,6 +371,10 @@ async function startServer() {
 
   // API Endpoint for video export (burning subtitles into MP4 with full duration and preserved audio)
   app.post(['/api/export-video', '/api/export'], handleUpload, async (req, res) => {
+    // Prevent server socket timeouts for longer video renders (up to 10 mins)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+
     let inputPath = req.file?.path;
     let srtPath = '';
     let outputPath = '';
@@ -414,11 +418,11 @@ async function startServer() {
       console.log(`[Export] Rendering full-duration video with ${captions.length} captions. Input: ${inputPath}`);
 
       await new Promise((resolve, reject) => {
-        const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
+        const escapedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "'\\\\''");
         
         ffmpeg(inputPath)
           .outputOptions([
-            '-vf', `subtitles=${escapedSrtPath}`,
+            '-vf', `subtitles='${escapedSrtPath}'`,
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-pix_fmt', 'yuv420p',
@@ -426,7 +430,8 @@ async function startServer() {
             '-map', '0:v:0',
             '-map', '0:a?',
             '-c:a', 'aac',
-            '-b:a', '128k'
+            '-b:a', '128k',
+            '-max_muxing_queue_size', '1024'
           ])
           .save(outputPath)
           .on('end', () => {

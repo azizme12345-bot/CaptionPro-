@@ -330,6 +330,75 @@ async function extractAudioBase64(fileOrBlob: Blob | File): Promise<string> {
   });
 }
 
+// Helper to probe exact duration of a video Blob in the browser
+async function verifyBlobDuration(blob: Blob): Promise<number> {
+  return new Promise<number>((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const tempVid = document.createElement('video');
+    tempVid.preload = 'metadata';
+    
+    let resolved = false;
+    const cleanup = (dur: number) => {
+      if (!resolved) {
+        resolved = true;
+        URL.revokeObjectURL(url);
+        resolve(isNaN(dur) || !isFinite(dur) ? 0 : dur);
+      }
+    };
+
+    tempVid.onloadedmetadata = () => {
+      if (tempVid.duration && isFinite(tempVid.duration) && tempVid.duration > 0) {
+        cleanup(tempVid.duration);
+      } else {
+        tempVid.currentTime = 1e101;
+      }
+    };
+
+    tempVid.ontimeupdate = () => {
+      if (tempVid.duration && isFinite(tempVid.duration) && tempVid.duration > 0) {
+        cleanup(tempVid.duration);
+      }
+    };
+
+    tempVid.onerror = () => cleanup(0);
+
+    tempVid.src = url;
+    setTimeout(() => cleanup(0), 1000);
+  });
+}
+
+// Helper to get exact finite duration from video element
+async function getExactVideoDuration(videoEl: HTMLVideoElement): Promise<number> {
+  if (videoEl.duration && isFinite(videoEl.duration) && videoEl.duration > 0) {
+    return videoEl.duration;
+  }
+  return new Promise<number>((resolve) => {
+    let resolved = false;
+    const cleanup = (dur: number) => {
+      if (!resolved) {
+        resolved = true;
+        videoEl.removeEventListener('timeupdate', onTime);
+        resolve(isFinite(dur) && dur > 0 ? dur : 0);
+      }
+    };
+
+    const onTime = () => {
+      if (videoEl.duration && isFinite(videoEl.duration) && videoEl.duration > 0) {
+        cleanup(videoEl.duration);
+      }
+    };
+
+    videoEl.addEventListener('timeupdate', onTime);
+    const originalTime = videoEl.currentTime;
+    videoEl.currentTime = 1e101;
+
+    setTimeout(() => {
+      videoEl.currentTime = originalTime;
+      cleanup(videoEl.duration || 0);
+    }, 400);
+  });
+}
+
 export default function App() {
   // Video state
   const [videoSrc, setVideoSrc] = useState<string>(SAMPLE_VIDEO_URL);
@@ -1154,12 +1223,8 @@ export default function App() {
 
       video.muted = false;
       video.pause();
-      // Ensure video is properly seeked to beginning before recording starts
+      // Always force seek to beginning so video.ended resets to false before recording starts
       await new Promise<void>((seekResolve) => {
-        if (Math.abs(video.currentTime) < 0.05) {
-          seekResolve();
-          return;
-        }
         let settled = false;
         const onSeeked = () => {
           if (!settled) {
@@ -1176,18 +1241,18 @@ export default function App() {
             video.removeEventListener('seeked', onSeeked);
             seekResolve();
           }
-        }, 400);
+        }, 500);
       });
       
-      // Start recording with 500ms timeslice to collect chunks reliably without truncation
-      recorder.start(500);
+      // Start recording with 250ms timeslice to collect chunks continuously
+      recorder.start(250);
       await video.play().catch(() => {});
 
-      // Use exact video duration (e.g. 20 seconds) as target duration
-      const targetDuration = Math.max(video.duration || 0, duration || 0, 5);
-      const renderStartTime = performance.now();
+      // Determine exact video duration (e.g. 60s or 5 mins) to guarantee full playback
+      const exactDuration = await getExactVideoDuration(video);
+      const targetDuration = Math.max(exactDuration, video.duration || 0, duration || 0, 5);
 
-      // Real-time animation frame loop ensuring full video playback until video.ended or currentTime reaches video.duration
+      // Real-time frame loop ensuring full video duration is recorded without premature cutoff
       await new Promise<void>((resolve) => {
         let isResolved = false;
 
@@ -1195,25 +1260,20 @@ export default function App() {
           if (isResolved) return;
 
           const currentTime = video.currentTime;
-          const hasElapsedMin = (currentTime > 0.5) || ((performance.now() - renderStartTime) > 1000);
           
-          // Stop ONLY when video's ended event fires or when currentTime reaches video.duration
-          const isFinished = hasElapsedMin && (
-            video.ended ||
-            currentTime >= (targetDuration - 0.05) ||
-            video.paused && currentTime >= (targetDuration - 0.2)
-          );
+          // Stop ONLY when currentTime reaches targetDuration (e.g. 60s for 60s video)
+          const isFinished = (currentTime >= (targetDuration - 0.1)) || (video.ended && currentTime >= (targetDuration - 0.5));
 
           if (isFinished) {
             isResolved = true;
-            // Draw final frame to make sure last frame is rendered
+            // Draw final frame
             ctx.drawImage(video, 0, 0, width, height);
             resolve();
             return;
           }
 
-          // If playback was temporarily stalled, ensure it resumes until full duration is reached
-          if (video.paused && !video.ended) {
+          // If playback stalls or pauses prior to target duration, force play to keep recording full length
+          if (video.paused && currentTime < (targetDuration - 0.5)) {
             video.play().catch(() => {});
           }
 

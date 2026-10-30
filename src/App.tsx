@@ -204,9 +204,9 @@ async function extractAudioBase64(fileOrBlob: Blob | File): Promise<string> {
     }
   }
 
-  // 8000 Hz 16-bit mono provides high speech clarity while keeping base64 payload under 2MB
+  // 8000 Hz 16-bit mono provides high speech clarity while keeping base64 payload efficient
   const targetSampleRate = 8000;
-  const maxSec = Math.min(audioBuffer.duration, 120);
+  const maxSec = audioBuffer.duration; // Extract complete audio duration without cutoffs for long-form videos up to 1 hour
   const length = Math.round(maxSec * targetSampleRate);
   const offlineCtx = new OfflineAudioContext(1, length, targetSampleRate);
   const source = offlineCtx.createBufferSource();
@@ -441,13 +441,13 @@ export default function App() {
   // Media upload handler
   const processUploadedFile = (file: File) => {
     if (!file.type.startsWith('video/') && !file.type.startsWith('audio/') && !file.name.match(/\.(mp4|webm|mov|mkv|mp3|wav|m4a)$/i)) {
-      setStatusMessage('Import Failed: Please choose a valid video or audio file (MP4, WebM, MOV) under 500MB.');
+      setStatusMessage('Import Failed: Please choose a valid video or audio file (MP4, WebM, MOV) under 2GB.');
       setStatusType('error');
       return;
     }
 
-    if (file.size > 500 * 1024 * 1024) {
-      setStatusMessage('File Too Large: Please upload a media file under 500MB.');
+    if (file.size > 2000 * 1024 * 1024) {
+      setStatusMessage('File Too Large: Please upload a media file under 2GB.');
       setStatusType('error');
       return;
     }
@@ -789,6 +789,12 @@ export default function App() {
 
   // AI Speech-to-text Transcription using Gemini 2.5 Flash / Hugging Face Whisper
   const handleGenerateCaptions = async () => {
+    const video = videoRef.current;
+    if (video) {
+      video.pause();
+      setIsPlaying(false);
+    }
+
     if (!videoFile && !videoSrc) {
       setStatusMessage("Please import a media file first to transcribe real audio.");
       setStatusType("error");
@@ -939,6 +945,8 @@ export default function App() {
       setStatusType('error');
       return;
     }
+    video.pause();
+    setIsPlaying(false);
 
     setIsExporting(true);
     setExportProgress(10);
@@ -1399,6 +1407,7 @@ export default function App() {
                     src={videoSrc}
                     controls
                     playsInline
+                    preload="metadata"
                     className="w-full h-full object-contain bg-black"
                     onClick={togglePlay}
                   />
@@ -1536,17 +1545,18 @@ export default function App() {
                 {/* Form Row 2: Font Size */}
                 <div className="flex flex-col gap-2">
                   <div className="flex justify-between items-center">
-                    <label htmlFor="font-size" className="text-[13px] font-[600] text-[#a1a1aa]">Font Size (px)</label>
-                    <span className="text-xs text-[#10b981] font-mono">{captionFontSize}px</span>
+                    <label htmlFor="font-size" className="text-[13px] font-[600] text-[#a1a1aa]">Font Size</label>
+                    <span className="text-xs text-[#10b981] font-mono font-bold">{captionFontSize}px</span>
                   </div>
                   <input
                     id="font-size"
-                    type="number"
+                    type="range"
+                    min={12}
+                    max={72}
+                    step={1}
                     value={captionFontSize}
-                    min={10}
-                    max={80}
-                    onChange={(e) => setCaptionFontSize(Math.max(10, Math.min(80, parseInt(e.target.value) || 25)))}
-                    className="w-full bg-[#000000] border border-[#1f1f23] text-white p-3 rounded-lg text-[14px] outline-none focus:border-[#10b981] transition-colors"
+                    onChange={(e) => setCaptionFontSize(parseInt(e.target.value, 10))}
+                    className="w-full h-2 bg-[#000000] border border-[#1f1f23] rounded-lg appearance-none cursor-pointer accent-[#10b981]"
                   />
                 </div>
 
@@ -1708,7 +1718,7 @@ export default function App() {
           <h2 className="text-center text-[26px] font-bold mb-[30px] text-white">Frequently Asked Questions</h2>
           <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl mb-[15px]">
             <h3 className="text-[15px] font-semibold mb-1.5 text-white">Can I upload my own video?</h3>
-            <p className="text-[13px] text-[#a1a1aa] leading-[1.5]">Yes. Select Import Media to choose a video or audio file from your device up to 500MB.</p>
+            <p className="text-[13px] text-[#a1a1aa] leading-[1.5]">Yes. Select Import Media to choose any long-form video or audio file up to 1 hour (2GB).</p>
           </div>
           <div className="bg-[#0a0a0c] border border-[#1f1f23] p-5 rounded-xl mb-[15px]">
             <h3 className="text-[15px] font-semibold mb-1.5 text-white">Which languages are listed?</h3>

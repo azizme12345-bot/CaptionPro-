@@ -20,7 +20,7 @@ if (ffmpegStatic) {
 }
 
 const upload = multer({
-  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB limit
+  limits: { fileSize: 2000 * 1024 * 1024 }, // 2GB limit for long-form videos up to 1 hour
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
       const uploadDir = path.join(__dirname, 'uploads');
@@ -43,7 +43,7 @@ const handleUpload = (req: express.Request, res: express.Response, next: express
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({
           error: 'FILE_TOO_LARGE',
-          message: 'Video file exceeds the 500MB limit. Please upload a video under 500MB.'
+          message: 'Video file exceeds the 2GB limit. Please upload a video under 2GB.'
         });
       }
       return res.status(400).json({ error: 'UPLOAD_ERROR', message: err.message || 'File upload failed' });
@@ -66,8 +66,8 @@ async function startServer() {
     next();
   });
 
-  app.use(express.json({ limit: '500mb' }));
-  app.use(express.urlencoded({ limit: '500mb', extended: true }));
+  app.use(express.json({ limit: '2000mb' }));
+  app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 
   // Global JSON error handler for body parsing errors (guarantees JSON response, never HTML)
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -76,7 +76,7 @@ async function startServer() {
       if (err.type === 'entity.too.large' || err.status === 413) {
         return res.status(413).json({
           error: 'PAYLOAD_TOO_LARGE',
-          message: 'Request payload is too large. Please upload a video under 500MB.'
+          message: 'Request payload is too large. Please upload a video under 2GB.'
         });
       }
       return res.status(err.status || 400).json({
@@ -485,11 +485,11 @@ Rules:
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
   }
 
-  // API Endpoint for video export (burning subtitles into MP4 with full duration and preserved audio)
+  // API Endpoint for video export (burning subtitles into MP4 with full duration up to 1 hour and preserved audio)
   app.post(['/api/export-video', '/api/export'], handleUpload, async (req, res) => {
-    // Prevent server socket timeouts for longer video renders (up to 10 mins)
-    req.setTimeout(600000);
-    res.setTimeout(600000);
+    // Prevent server socket timeouts for long-form video renders (up to 1 hour)
+    req.setTimeout(3600000);
+    res.setTimeout(3600000);
 
     let inputPath = req.file?.path;
     let srtPath = '';

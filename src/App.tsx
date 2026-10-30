@@ -1183,12 +1183,11 @@ export default function App() {
       recorder.start(500);
       await video.play().catch(() => {});
 
-      // Ensure total duration accurately reflects video duration or max caption timestamp (e.g. 21-22 seconds)
-      const maxCaptionEnd = captions.reduce((max, c) => Math.max(max, c.endSec || (typeof c.end === 'number' ? c.end : 0)), 0);
-      const totalDuration = Math.max(video.duration || 0, duration || 0, maxCaptionEnd, 5);
+      // Use exact video duration (e.g. 20 seconds) as target duration
+      const targetDuration = Math.max(video.duration || 0, duration || 0, 5);
       const renderStartTime = performance.now();
 
-      // Real-time animation frame loop ensuring full video playback until complete duration is completely rendered
+      // Real-time animation frame loop ensuring full video playback until video.ended or currentTime reaches video.duration
       await new Promise<void>((resolve) => {
         let isResolved = false;
 
@@ -1196,9 +1195,14 @@ export default function App() {
           if (isResolved) return;
 
           const currentTime = video.currentTime;
-          // Guard against premature finish on first frames
-          const hasElapsedMin = (currentTime > 0.8) || ((performance.now() - renderStartTime) > 2000);
-          const isFinished = hasElapsedMin && (currentTime >= (totalDuration - 0.08) || (video.ended && currentTime >= (totalDuration - 0.4)));
+          const hasElapsedMin = (currentTime > 0.5) || ((performance.now() - renderStartTime) > 1000);
+          
+          // Stop ONLY when video's ended event fires or when currentTime reaches video.duration
+          const isFinished = hasElapsedMin && (
+            video.ended ||
+            currentTime >= (targetDuration - 0.05) ||
+            video.paused && currentTime >= (targetDuration - 0.2)
+          );
 
           if (isFinished) {
             isResolved = true;
@@ -1213,7 +1217,7 @@ export default function App() {
             video.play().catch(() => {});
           }
 
-          const pct = Math.min(99, Math.round((currentTime / totalDuration) * 100));
+          const pct = Math.min(99, Math.round((currentTime / targetDuration) * 100));
           setExportProgress(pct);
 
           // Draw video frame
@@ -1355,8 +1359,8 @@ export default function App() {
 
       // Test logic confirming client output duration matches target duration
       const probedDur = await verifyBlobDuration(finalBlob);
-      const verifiedDuration = probedDur > 0 ? probedDur : totalDuration;
-      console.log(`[Client Export Test Logic] Verified: ${verifiedDuration.toFixed(2)}s | Target: ${totalDuration.toFixed(2)}s`);
+      const verifiedDuration = probedDur > 0 ? probedDur : targetDuration;
+      console.log(`[Client Export Test Logic] Verified: ${verifiedDuration.toFixed(2)}s | Target: ${targetDuration.toFixed(2)}s`);
 
       const downloadUrl = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');

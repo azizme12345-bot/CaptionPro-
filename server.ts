@@ -255,7 +255,7 @@ async function startServer() {
   }
 
   // API Endpoint for video transcription using Hugging Face Whisper Large v3
-  app.post('/api/transcribe-video', handleUpload, async (req, res) => {
+  app.post(['/api/transcribe-video', '/api/captions', '/api/generate-captions'], handleUpload, async (req, res) => {
     let filePath = req.file?.path;
     let extractedWavPath = '';
 

@@ -1649,6 +1649,7 @@ export default function App() {
                           left: `${captionXPercent}%`,
                           top: `${captionYPercent}%`,
                           transform: 'translate(-50%, -50%)',
+                          touchAction: 'none',
                         }}
                         className={`absolute z-30 max-w-[90%] text-center cursor-move transition-transform duration-75 select-none ${
                           isDraggingCaption ? 'ring-2 ring-[#10b981] ring-offset-2 ring-offset-black rounded px-3 py-1.5 bg-black/50 shadow-xl' : 'hover:outline-dashed hover:outline-1 hover:outline-[#10b981]/50 rounded'
@@ -1715,6 +1716,7 @@ export default function App() {
                           left: `${textItem.xPercent}%`,
                           top: `${textItem.yPercent}%`,
                           transform: 'translate(-50%, -50%)',
+                          touchAction: 'none',
                         }}
                         className={`absolute z-40 max-w-[90%] text-center cursor-move transition-transform duration-75 select-none ${
                           isSelected

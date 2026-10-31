@@ -417,7 +417,7 @@ export default function App() {
   const [captions, setCaptions] = useState<CaptionSegment[]>([]);
   const [selectedClipId, setSelectedClipId] = useState<string>('');
   const [language, setLanguage] = useState<string>('English');
-  const [maxWordsPerLine, setMaxWordsPerLine] = useState<number>(5);
+  const [maxWordsPerLine, setMaxWordsPerLine] = useState<number>(3);
 
   // Caption Styling state (Matching Caption Free options)
   const [captionFontSize, setCaptionFontSize] = useState<number>(32);
@@ -1671,7 +1671,7 @@ export default function App() {
                               ? '2px 2px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000'
                               : 'none',
                           }}
-                          className="font-black tracking-tight leading-tight inline-flex flex-wrap justify-center gap-x-1.5"
+                          className="font-black tracking-tight leading-tight inline-flex flex-nowrap whitespace-nowrap justify-center gap-x-1.5"
                         >
                           {words.map((word, wIdx) => {
                             const isCurrentWord = wIdx === activeWordIdx;

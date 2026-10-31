@@ -676,7 +676,7 @@ export default function App() {
     }
   };
 
-  // Video Export using FFmpeg.wasm (No browser crash, correct duration, audio & captions preserved)
+  // Video Export using robust FFmpeg backend API (full duration, audio preserved, captions burned in, TikTok/YouTube compatible)
   const handleExportBurnedVideo = async () => {
     const video = videoRef.current;
     if (!video) {
@@ -690,10 +690,10 @@ export default function App() {
     setIsPlaying(false);
 
     setIsExporting(true);
-    setExportProgress(5);
+    setExportProgress(15);
     setExportElapsedSec(0);
-    setExportStatusDetail('Initializing FFmpeg.wasm engine...');
-    setStatusMessage('Exporting video... 5%');
+    setExportStatusDetail('Preparing video export stream...');
+    setStatusMessage('Exporting video... 15%');
     setStatusType('info');
 
     exportAbortControllerRef.current = new AbortController();
@@ -712,72 +712,41 @@ export default function App() {
 
       if (!fileToProcess) throw new Error('No video file found to export.');
 
-      setExportProgress(20);
-      setExportStatusDetail('Loading FFmpeg core modules...');
-      setStatusMessage('Exporting video... 20%');
+      setExportProgress(35);
+      setExportStatusDetail('Rendering video and burning subtitles...');
+      setStatusMessage('Exporting video... 35%');
 
-      const ffmpeg = new FFmpeg();
-      ffmpeg.on('progress', ({ progress }) => {
-        const pct = Math.min(98, Math.max(20, Math.round(progress * 100)));
-        setExportProgress(pct);
-        setExportStatusDetail(`Rendering video & burning subtitles (${pct}%)...`);
-        setStatusMessage(`Exporting video... ${pct}%`);
+      const formData = new FormData();
+      formData.append('video', fileToProcess, videoFileName || 'video.mp4');
+      formData.append('captions', JSON.stringify(captions));
+
+      setExportProgress(65);
+      setExportStatusDetail('Encoding full duration MP4 (TikTok/YouTube compatible)...');
+      setStatusMessage('Exporting video... 65%');
+
+      const exportResp = await fetch('/api/export-video', {
+        method: 'POST',
+        body: formData,
+        signal: abortSignal
       });
 
-      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      });
-
-      setExportProgress(40);
-      setExportStatusDetail('Preparing virtual files...');
-
-      const inputName = 'input.mp4';
-      const outputName = 'output.mp4';
-      const srtName = 'subtitles.srt';
-
-      await ffmpeg.writeFile(inputName, await fetchFile(fileToProcess));
-
-      let srtContent = '';
-      if (captions && captions.length > 0) {
-        captions.forEach((c: any, index: number) => {
-          let startSec = typeof c.startSec === 'number' ? c.startSec : 0;
-          let endSec = typeof c.endSec === 'number' ? c.endSec : (startSec + 2.5);
-          const formatSrtTime = (sec: number) => {
-            const h = Math.floor(sec / 3600);
-            const m = Math.floor((sec % 3600) / 60);
-            const s = Math.floor(sec % 60);
-            const ms = Math.floor((sec % 1) * 1000);
-            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
-          };
-          srtContent += `${index + 1}\n${formatSrtTime(startSec)} --> ${formatSrtTime(endSec)}\n${(c.text || '').trim()}\n\n`;
-        });
+      if (!exportResp.ok) {
+        const errJson = await exportResp.json().catch(() => ({}));
+        throw new Error(errJson.error || 'Server video export failed');
       }
 
-      await ffmpeg.writeFile(srtName, srtContent);
-
-      setExportProgress(55);
-      setExportStatusDetail('Encoding MP4 & burning subtitles...');
-
-      const ffmpegArgs = captions.length > 0
-        ? ['-i', inputName, '-vf', `subtitles=${srtName}:force_style='FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'`, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-movflags', '+faststart', outputName]
-        : ['-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-movflags', '+faststart', outputName];
-
-      await ffmpeg.exec(ffmpegArgs);
-
-      setExportProgress(95);
+      setExportProgress(90);
       setExportStatusDetail('Finalizing download...');
+      setStatusMessage('Exporting video... 90%');
 
-      const data = await ffmpeg.readFile(outputName);
-      const exportedBlob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'video/mp4' });
-
+      const exportedBlob = await exportResp.blob();
       const downloadUrl = URL.createObjectURL(exportedBlob);
       const a = document.createElement('a');
       a.href = downloadUrl;
       a.download = 'captionpro-export.mp4';
       document.body.appendChild(a);
       a.click();
+
       setTimeout(() => {
         try {
           document.body.removeChild(a);
@@ -798,7 +767,7 @@ export default function App() {
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       console.error('Export error:', err);
-      setStatusMessage(`Error: FFmpeg failed to load — check internet connection (${err.message || 'Export error'})`);
+      setStatusMessage(`Error: Export failed — ${err.message || 'Processing error'}`);
       setStatusType('error');
       setIsExporting(false);
       setExportProgress(0);
@@ -811,6 +780,28 @@ export default function App() {
       }
     }
   };
+
+  // Fullscreen synchronization effect: ensures captions display on top of video in fullscreen mode
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const handleFullscreenChange = () => {
+      const isVideoFullscreen = document.fullscreenElement === video;
+      if (isVideoFullscreen && videoContainerRef.current) {
+        document.exitFullscreen().then(() => {
+          videoContainerRef.current?.requestFullscreen();
+        }).catch(() => {
+          videoContainerRef.current?.requestFullscreen();
+        });
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+    };
+  }, [videoSrc]);
 
   // Video time & metadata listeners
   useEffect(() => {

@@ -661,15 +661,9 @@ export default function App() {
     } catch (err: any) {
       clearInterval(progressTimer);
       console.error('Caption generation error:', err);
-      // Fallback robust mock captions in requested language if API is offline
-      const mockSegs: CaptionSegment[] = [
-        { id: 'm1', start: '00:00', end: '00:03', startSec: 0, endSec: 3, text: language === 'Urdu' ? 'خوش آمدید اس ویڈیو میں' : language === 'Arabic' ? 'أهلاً بك في هذا الفيديو' : language === 'Hindi' ? 'इस वीडियो में आपका स्वागत है' : 'Welcome to this video' },
-        { id: 'm2', start: '00:03', end: '00:06', startSec: 3, endSec: 6, text: language === 'Urdu' ? 'بہترین سبرائٹلز اور کیپشنز' : language === 'Arabic' ? 'أفضل الترجمات والتسميات' : language === 'Hindi' ? 'सर्वश्रेष्ठ उपशीर्षक और कैप्शन' : 'Professional AI Subtitles' },
-        { id: 'm3', start: '00:06', end: '00:10', startSec: 6, endSec: 10, text: language === 'Urdu' ? 'ٹک ٹاک اور ریلز کے لیے' : language === 'Arabic' ? 'لتيك توك وريلز' : language === 'Hindi' ? 'टिकटॉक और रील्स के लिए' : 'For TikTok and Reels' }
-      ];
-      setCaptions(mockSegs);
-      setSelectedClipId(mockSegs[0].id);
-      setStatusMessage(`Error: Caption generation failed — API timeout / fallback loaded (${language})`);
+      setCaptions([]);
+      setSelectedClipId('');
+      setStatusMessage(`Error: Caption generation failed — ${err.message || 'API error'}`);
       setStatusType('error');
     } finally {
       setIsTranscribing(false);
@@ -992,9 +986,26 @@ export default function App() {
                       <Film className="w-4 h-4 text-[#10b981]" />
                       <span>Media Player</span>
                     </h2>
-                    <span className="text-xs font-mono text-[#a1a1aa] bg-[#000000] px-2 py-0.5 rounded border border-[#1f1f23]">
-                      X: {captionXPercent}% • Y: {captionYPercent}%
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (videoContainerRef.current) {
+                            if (document.fullscreenElement) {
+                              document.exitFullscreen?.();
+                            } else {
+                              videoContainerRef.current.requestFullscreen?.();
+                            }
+                          }
+                        }}
+                        className="bg-[#151519] hover:bg-[#1f1f23] text-[#10b981] font-semibold text-xs px-2.5 py-1 rounded border border-[#1f1f23] cursor-pointer"
+                      >
+                        Fullscreen Preview
+                      </button>
+                      <span className="text-xs font-mono text-[#a1a1aa] bg-[#000000] px-2 py-0.5 rounded border border-[#1f1f23]">
+                        X: {captionXPercent}% • Y: {captionYPercent}%
+                      </span>
+                    </div>
                   </div>
 
                   {/* Aspect Ratio Selector */}

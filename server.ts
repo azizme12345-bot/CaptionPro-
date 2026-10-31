@@ -297,13 +297,13 @@ Rules:
 3. If language is Urdu, write in clean Unicode Urdu script.
 4. If language is Roman Urdu, write in Latin phonetic alphabet.`;
 
-    const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+    const GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.5-transcribe', 'gemini-flash-latest'];
     let response: any = null;
     let lastErr: any = null;
 
     for (const modelName of GEMINI_MODELS) {
       try {
-        console.log(`[Gemini API] Trying model candidate ${modelName} (${language})...`);
+        console.log(`[Gemini API] Transcribing audio with ${modelName} (${language})...`);
         response = await ai.models.generateContent({
           model: modelName,
           contents: [
@@ -325,7 +325,7 @@ Rules:
     }
 
     if (!response || !response.text) {
-      throw lastErr || new Error('All Gemini Flash model candidates failed to transcribe audio');
+      throw lastErr || new Error('All Gemini transcription models failed to transcribe audio');
     }
 
     const text = (response.text || '').trim();
@@ -380,7 +380,7 @@ Rules:
     return parseFloat(val) || 0;
   }
 
-  // API Endpoint for video transcription using Hugging Face Whisper Large v3 or Google Gemini 2.5 Flash
+  // API Endpoint for video transcription using Google Gemini 3.8 Flash (or Hugging Face Whisper)
   app.post(['/api/transcribe-video', '/api/captions', '/api/generate-captions'], handleUpload, async (req, res) => {
     let filePath = req.file?.path;
     let extractedWavPath = '';
@@ -412,15 +412,22 @@ Rules:
       }
 
       let captions = [];
-      if (process.env.HF_TOKEN) {
+      // Prioritize Gemini 3.8 Flash natively supported in AI Studio
+      if (process.env.GEMINI_API_KEY) {
         try {
-          captions = await processWhisperAudio(audioBuffer, language);
-        } catch (whisperErr) {
-          console.warn("[Whisper API Notice] Falling back to Gemini 2.5 Flash transcription:", whisperErr);
           captions = await processGeminiAudio(audioBuffer, language);
+        } catch (geminiErr: any) {
+          console.warn("[Gemini API Notice] Falling back to Whisper transcription:", geminiErr?.message || geminiErr);
+          if (process.env.HF_TOKEN) {
+            captions = await processWhisperAudio(audioBuffer, language);
+          } else {
+            throw geminiErr;
+          }
         }
+      } else if (process.env.HF_TOKEN) {
+        captions = await processWhisperAudio(audioBuffer, language);
       } else {
-        captions = await processGeminiAudio(audioBuffer, language);
+        throw new Error('MISSING_API_KEYS');
       }
 
       return res.json({ captions, count: captions.length });
@@ -429,66 +436,12 @@ Rules:
       if (err.message === 'MISSING_API_KEYS') {
         return res.status(400).json({
           error: 'MISSING_API_KEYS',
-          message: 'Neither HF_TOKEN nor GEMINI_API_KEY is configured in server environment variables. Please set HF_TOKEN or GEMINI_API_KEY.'
+          message: 'GEMINI_API_KEY is not configured in server environment variables.'
         });
       }
       return res.status(500).json({
         error: 'TRANSCRIPTION_FAILED',
         message: err.message || 'Speech recognition failed'
-      });
-    } finally {
-      try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) {}
-      try { if (extractedWavPath && fs.existsSync(extractedWavPath)) fs.unlinkSync(extractedWavPath); } catch (e) {}
-    }
-  });
-
-  // Alias endpoint for audio transcription
-  app.post('/api/generate-captions', handleUpload, async (req, res) => {
-    let filePath = req.file?.path;
-    let extractedWavPath = '';
-
-    try {
-      const language = req.body.language || 'English';
-      let audioBuffer: Buffer | null = null;
-
-      if (req.body.audioBase64) {
-        audioBuffer = Buffer.from(req.body.audioBase64, 'base64');
-      } else if (filePath) {
-        extractedWavPath = path.join(path.dirname(filePath), `whisper-${Date.now()}.wav`);
-        await new Promise((resolve, reject) => {
-          ffmpeg(filePath!)
-            .noVideo()
-            .audioCodec('pcm_s16le')
-            .audioChannels(1)
-            .audioFrequency(16000)
-            .output(extractedWavPath)
-            .on('end', resolve)
-            .on('error', reject)
-            .run();
-        });
-        audioBuffer = fs.readFileSync(extractedWavPath);
-      }
-
-      if (!audioBuffer) {
-        return res.status(400).json({
-          error: 'AUDIO_REQUIRED',
-          message: 'Please upload a video file or record audio to transcribe with Hugging Face Whisper. Sample captions have been removed.'
-        });
-      }
-
-      const captions = await processWhisperAudio(audioBuffer, language);
-      return res.json({ captions, count: captions.length });
-    } catch (err: any) {
-      console.error("[Generate Captions Error]", err);
-      if (err.message === 'MISSING_HF_TOKEN' || err.code === 'MISSING_HF_TOKEN') {
-        return res.status(400).json({
-          error: 'MISSING_HF_TOKEN',
-          message: 'Hugging Face API token (HF_TOKEN) is not configured in the server environment variables. Please set HF_TOKEN to transcribe video audio with Hugging Face Whisper.'
-        });
-      }
-      return res.status(500).json({
-        error: 'WHISPER_TRANSCRIPTION_FAILED',
-        message: err.message || 'Hugging Face Whisper transcription failed'
       });
     } finally {
       try { if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) {}

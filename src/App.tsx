@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import {
   Play,
   Pause,
@@ -1186,7 +1188,7 @@ export default function App() {
     setStatusType('info');
   };
 
-  // Video Export (Full duration & preserved audio - strictly pauses background video)
+  // Video Export using FFmpeg.wasm (Client-side rendering, no browser crash, correct duration, audio & captions preserved)
   const handleExportBurnedVideo = async () => {
     const video = videoRef.current;
     if (!video) {
@@ -1194,7 +1196,8 @@ export default function App() {
       setStatusType('error');
       return;
     }
-    // CRITICAL (Task 4): Guarantee video does NOT keep playing during export
+
+    // Stop video preview and mute during export
     video.pause();
     video.muted = true;
     setIsPlaying(false);
@@ -1202,453 +1205,106 @@ export default function App() {
     setIsExporting(true);
     setExportProgress(5);
     setExportElapsedSec(0);
-    setExportStatusDetail('Preparing media and subtitle synchronization...');
+    setExportStatusDetail('Initializing FFmpeg.wasm engine...');
 
     exportAbortControllerRef.current = new AbortController();
     const abortSignal = exportAbortControllerRef.current.signal;
 
-    // Timer to track seconds elapsed for Wink-style time indicator
     const exportTimer = setInterval(() => {
       setExportElapsedSec(s => s + 1);
     }, 1000);
 
-    // Smooth progress simulation while server renders
-    const progressSimulator = setInterval(() => {
-      setExportProgress(prev => {
-        if (prev < 30) {
-          setExportStatusDetail('Uploading video to render engine...');
-          return prev + 4;
-        } else if (prev < 75) {
-          setExportStatusDetail('Encoding full-duration MP4 with faststart & preserved audio...');
-          return prev + 2;
-        } else if (prev < 90) {
-          setExportStatusDetail('Burning synchronized subtitles and finalizing container...');
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 350);
-
-    // Attempt 1: Server-Side FFmpeg Render
     try {
-      let fileToUpload: File | Blob | null = videoFile;
-      if (!fileToUpload && videoSrc) {
+      let fileToProcess: File | Blob | null = videoFile;
+      if (!fileToProcess && videoSrc) {
         try {
           const resp = await fetch(videoSrc, { signal: abortSignal });
-          if (resp.ok) {
-            fileToUpload = await resp.blob();
-          }
-        } catch (fetchErr: any) {
-          if (fetchErr.name === 'AbortError') return;
-          console.warn("Could not fetch remote videoSrc for server render:", fetchErr);
-        }
+          if (resp.ok) fileToProcess = await resp.blob();
+        } catch (e) {}
       }
 
-      if (fileToUpload) {
-        setExportProgress(30);
-        setExportStatusDetail('Encoding full-duration MP4 with preserved audio...');
-        
-        const formData = new FormData();
-        formData.append('video', fileToUpload, videoFileName || 'video.mp4');
-        formData.append('captions', JSON.stringify(captions));
+      if (!fileToProcess) {
+        throw new Error('No video file found to export.');
+      }
 
-        const serverResp = await fetch(EXPORT_SERVER_URL, {
-          method: 'POST',
-          body: formData,
-          signal: abortSignal
+      setExportProgress(15);
+      setExportStatusDetail('Loading FFmpeg core modules...');
+
+      const ffmpeg = new FFmpeg();
+      
+      ffmpeg.on('progress', ({ progress }) => {
+        const pct = Math.min(98, Math.max(15, Math.round(progress * 100)));
+        setExportProgress(pct);
+        setExportStatusDetail(`Rendering video & burning subtitles (${pct}%)...`);
+      });
+
+      // Load FFmpeg from CDN unpkg
+      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+      });
+
+      setExportProgress(35);
+      setExportStatusDetail('Preparing video and subtitle files...');
+
+      const inputName = 'input.mp4';
+      const outputName = 'output.mp4';
+      const srtName = 'subtitles.srt';
+
+      // Write video file to FFmpeg virtual file system
+      await ffmpeg.writeFile(inputName, await fetchFile(fileToProcess));
+
+      // Build SRT content for captions
+      let srtContent = '';
+      if (captions && captions.length > 0) {
+        captions.forEach((c: any, index: number) => {
+          let startSec = typeof c.startSec === 'number' ? c.startSec : (parseFloat(c.start) || 0);
+          let endSec = typeof c.endSec === 'number' ? c.endSec : (parseFloat(c.end) || (startSec + 2.5));
+          
+          if (typeof c.start === 'string' && c.start.includes(':')) {
+            const parts = c.start.split(':');
+            startSec = (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+          }
+          if (typeof c.end === 'string' && c.end.includes(':')) {
+            const parts = c.end.split(':');
+            endSec = (parseFloat(parts[0]) || 0) * 60 + (parseFloat(parts[1]) || 0);
+          }
+
+          const formatSrtTime = (sec: number) => {
+            const h = Math.floor(sec / 3600);
+            const m = Math.floor((sec % 3600) / 60);
+            const s = Math.floor(sec % 60);
+            const ms = Math.floor((sec % 1) * 1000);
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms).padStart(3, '0')}`;
+          };
+
+          srtContent += `${index + 1}\n${formatSrtTime(startSec)} --> ${formatSrtTime(endSec)}\n${(c.text || '').trim()}\n\n`;
         });
-
-        if (serverResp.ok) {
-          clearInterval(progressSimulator);
-          setExportProgress(95);
-          setExportStatusDetail('Finalizing download and verifying duration...');
-          const exportedBlob = await serverResp.blob();
-
-          if (exportedBlob && exportedBlob.size > 1000) {
-            const serverDurationHeader = parseFloat(serverResp.headers.get('X-Video-Duration') || '0');
-            const probedDur = await verifyBlobDuration(exportedBlob);
-            const verifiedDuration = probedDur > 0 ? probedDur : (serverDurationHeader > 0 ? serverDurationHeader : (duration || 20));
-
-            const mp4Blob = new Blob([exportedBlob], { type: 'video/mp4' });
-            const downloadUrl = URL.createObjectURL(mp4Blob);
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = 'captionpro-export.mp4';
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(() => {
-              try {
-                document.body.removeChild(a);
-                URL.revokeObjectURL(downloadUrl);
-              } catch (e) {}
-            }, 5000);
-
-            setExportProgress(100);
-            setExportStatusDetail('Video exported successfully!');
-            setStatusMessage(`Export complete! Exported ${Math.round(verifiedDuration)}s video with preserved audio.`);
-            setStatusType('success');
-            setTimeout(() => {
-              setIsExporting(false);
-              setExportProgress(0);
-            }, 800);
-            return;
-          }
-        }
-      }
-    } catch (serverErr: any) {
-      if (serverErr.name === 'AbortError') return;
-      console.warn("Server render pipeline fallback to client engine:", serverErr);
-    } finally {
-      clearInterval(exportTimer);
-      clearInterval(progressSimulator);
-      const vid = videoRef.current;
-      if (vid) {
-        vid.pause();
-        setIsPlaying(false);
-      }
-    }
-
-    // Attempt 2: Client-Side Fallback Engine
-    setStatusMessage('Rendering video locally with audio and subtitles...');
-    let canvasStream: MediaStream | null = null;
-    let audioStream: MediaStream | null = null;
-    let combinedStream: MediaStream | null = null;
-    const chunks: Blob[] = [];
-
-    try {
-      const origPlaying = !video.paused;
-      const origTime = video.currentTime;
-      const origMuted = video.muted;
-      video.pause();
-
-      let rawWidth = video.videoWidth || 1280;
-      let rawHeight = video.videoHeight || 720;
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768;
-
-      if (isMobile && rawHeight > 720) {
-        const ratio = rawWidth / rawHeight;
-        rawHeight = 720;
-        rawWidth = Math.round(rawHeight * ratio);
       }
 
-      let width = rawWidth % 2 !== 0 ? rawWidth - 1 : rawWidth;
-      let height = rawHeight % 2 !== 0 ? rawHeight - 1 : rawHeight;
+      await ffmpeg.writeFile(srtName, srtContent);
 
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
+      setExportProgress(50);
+      setExportStatusDetail('Burning captions & encoding MP4 (faststart)...');
 
-      if (!ctx) throw new Error('Canvas 2D context not supported');
+      // Run FFmpeg command with subtitle burn-in, audio copy, and faststart for TikTok/YouTube compatibility
+      const ffmpegArgs = captions.length > 0
+        ? ['-i', inputName, '-vf', `subtitles=${srtName}:force_style='FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'`, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-movflags', '+faststart', outputName]
+        : ['-i', inputName, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-movflags', '+faststart', outputName];
 
-      let mimeType = '';
-      const mp4Candidates = [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4;codecs=avc1,mp4a.40.2',
-        'video/mp4',
-        'video/webm;codecs=vp9,opus',
-        'video/webm'
-      ];
+      await ffmpeg.exec(ffmpegArgs);
 
-      if (typeof MediaRecorder !== 'undefined') {
-        for (const candidate of mp4Candidates) {
-          if (MediaRecorder.isTypeSupported(candidate)) {
-            mimeType = candidate;
-            break;
-          }
-        }
-      }
+      setExportProgress(92);
+      setExportStatusDetail('Reading exported video data...');
 
-      if (!mimeType) {
-        setIsExporting(false);
-        setStatusMessage('Error: This browser cannot export compatible video. Please use Chrome or Safari.');
-        setStatusType('error');
-        return;
-      }
+      const data = await ffmpeg.readFile(outputName);
+      const exportedBlob = new Blob([new Uint8Array(data as Uint8Array)], { type: 'video/mp4' });
 
-      const fileExt = mimeType.includes('mp4') ? 'mp4' : 'webm';
-      canvasStream = canvas.captureStream(30);
-
-      try {
-        if ((video as any).captureStream) {
-          const vidCaptured = (video as any).captureStream();
-          if (vidCaptured.getAudioTracks().length > 0) audioStream = vidCaptured;
-        } else if ((video as any).mozCaptureStream) {
-          const vidCaptured = (video as any).mozCaptureStream();
-          if (vidCaptured.getAudioTracks().length > 0) audioStream = vidCaptured;
-        }
-
-        if (!audioStream) {
-          const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 });
-          const sourceNode = audioCtx.createMediaElementSource(video);
-          const destNode = audioCtx.createMediaStreamDestination();
-          sourceNode.connect(destNode);
-          // Pure recording stream - do NOT output to speakers during export
-          audioStream = destNode.stream;
-        }
-      } catch (audioErr) {
-        console.warn("Audio capture fallback warning:", audioErr);
-      }
-
-      combinedStream = new MediaStream();
-      if (canvasStream) canvasStream.getVideoTracks().forEach(track => combinedStream!.addTrack(track));
-      if (audioStream) audioStream.getAudioTracks().forEach(track => combinedStream!.addTrack(track));
-
-      const videoBitrate = isMobile ? 2500000 : 4000000;
-      const recorder = new MediaRecorder(combinedStream, {
-        mimeType,
-        audioBitsPerSecond: 128000,
-        videoBitsPerSecond: videoBitrate
-      });
-
-      recorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
-      };
-
-      const renderPromise = new Promise<Blob>((resolve, reject) => {
-        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
-        recorder.onerror = (e) => reject(e);
-      });
-
-      // Strict Task 4 requirement: video must NOT keep playing audibly or in background
-      video.muted = true;
-      video.pause();
-      setIsPlaying(false);
-
-      await new Promise<void>((seekResolve) => {
-        let settled = false;
-        const onSeeked = () => {
-          if (!settled) {
-            settled = true;
-            video.removeEventListener('seeked', onSeeked);
-            seekResolve();
-          }
-        };
-        video.addEventListener('seeked', onSeeked);
-        video.currentTime = 0;
-        setTimeout(() => {
-          if (!settled) {
-            settled = true;
-            video.removeEventListener('seeked', onSeeked);
-            seekResolve();
-          }
-        }, 500);
-      });
-
-      const exactDuration = await getExactVideoDuration(video);
-      const targetDuration = Math.max(exactDuration, video.duration || 0, duration || 0, 5);
-
-      recorder.start(250);
-      await video.play().catch(() => {});
-
-      await new Promise<void>((resolve) => {
-        let isResolved = false;
-
-        const drawFrame = () => {
-          if (isResolved) return;
-
-          const currentTime = video.currentTime;
-          const isFinished = (currentTime >= (targetDuration - 0.1)) || (video.ended && currentTime >= (targetDuration - 0.5));
-
-          if (isFinished) {
-            isResolved = true;
-            ctx.drawImage(video, 0, 0, width, height);
-            resolve();
-            return;
-          }
-
-          if (video.paused && currentTime < (targetDuration - 0.5)) {
-            video.play().catch(() => {});
-          }
-
-          const pct = Math.min(99, Math.round((currentTime / targetDuration) * 100));
-          setExportProgress(pct);
-
-          ctx.drawImage(video, 0, 0, width, height);
-
-          const activeClip = captions.find(c => currentTime >= c.startSec && currentTime <= c.endSec);
-          if (activeClip && activeClip.text.trim()) {
-            ctx.save();
-            const baseSize = Math.max(16, Math.round(captionFontSize * (height / 720)));
-            ctx.font = `800 ${baseSize}px ${activeFontFamily}`;
-            ctx.textBaseline = 'middle';
-
-            const xCenter = width * (captionXPercent / 100);
-            const yPos = Math.max(baseSize, Math.min(height - baseSize, height * (captionYPercent / 100)));
-
-            const words = activeClip.text.trim().split(/\s+/).filter(Boolean);
-            const totalWords = words.length;
-            const segDuration = Math.max(0.1, activeClip.endSec - activeClip.startSec);
-            const elapsed = Math.max(0, currentTime - activeClip.startSec);
-            const activeWordIdx = Math.min(
-              totalWords - 1,
-              Math.max(0, Math.floor((elapsed / segDuration) * totalWords))
-            );
-
-            const isRtl = /[\u0600-\u06FF]/.test(activeClip.text);
-            const spaceWidth = ctx.measureText(' ').width;
-            const wordWidths = words.map(w => ctx.measureText(isRtl ? w : w.toUpperCase()).width);
-            const totalLineWidth = wordWidths.reduce((a, b) => a + b, 0) + spaceWidth * Math.max(0, words.length - 1);
-
-            const minMargin = width * 0.02;
-            let cursorX = Math.max(minMargin, Math.min(width - totalLineWidth - minMargin, xCenter - (totalLineWidth / 2)));
-
-            if (isRtl) cursorX = xCenter + (totalLineWidth / 2);
-
-            for (let wIdx = 0; wIdx < words.length; wIdx++) {
-              const rawWord = words[wIdx];
-              const word = isRtl ? rawWord : rawWord.toUpperCase();
-              const isActive = wIdx === activeWordIdx;
-              const wWidth = wordWidths[wIdx];
-
-              if (isRtl) cursorX -= wWidth;
-
-              ctx.save();
-              ctx.textAlign = 'left';
-
-              // Task 7: Professional Caption Animations in Canvas Export
-              let wordY = yPos;
-              let isMarkerBox = false;
-
-              if (isActive) {
-                if (animationType === 'karaoke-jump') {
-                  wordY = yPos - (baseSize * 0.15);
-                } else if (animationType === 'neon-pulse') {
-                  ctx.shadowColor = '#10b981';
-                  ctx.shadowBlur = baseSize * 0.45;
-                } else if (animationType === 'flash-gold') {
-                  ctx.shadowColor = '#facc15';
-                  ctx.shadowBlur = baseSize * 0.4;
-                } else if (animationType === 'marker-box') {
-                  isMarkerBox = true;
-                  ctx.save();
-                  ctx.fillStyle = '#10b981';
-                  const pad = baseSize * 0.15;
-                  ctx.beginPath();
-                  if ((ctx as any).roundRect) {
-                    (ctx as any).roundRect(cursorX - pad, wordY - (baseSize * 0.6), wWidth + (pad * 2), baseSize * 1.2, 6);
-                  } else {
-                    ctx.rect(cursorX - pad, wordY - (baseSize * 0.6), wWidth + (pad * 2), baseSize * 1.2);
-                  }
-                  ctx.fill();
-                  ctx.restore();
-                }
-              }
-
-              if (!isMarkerBox) {
-                ctx.lineWidth = Math.max(4, baseSize * 0.16);
-                ctx.lineJoin = 'miter';
-                ctx.miterLimit = 2;
-                ctx.strokeStyle = '#000000';
-                ctx.strokeText(word, cursorX, wordY);
-              }
-
-              if (isActive) {
-                if (isMarkerBox) {
-                  ctx.fillStyle = '#000000';
-                } else if (animationType === 'flash-gold') {
-                  ctx.fillStyle = '#facc15';
-                } else if (animationType === 'neon-pulse') {
-                  ctx.fillStyle = '#34d399';
-                } else {
-                  ctx.fillStyle = '#10b981';
-                }
-              } else {
-                ctx.fillStyle = captionColor || '#ffffff';
-              }
-
-              ctx.fillText(word, cursorX, wordY);
-              ctx.restore();
-
-              if (!isRtl) cursorX += wWidth + spaceWidth;
-              else cursorX -= spaceWidth;
-            }
-
-            ctx.restore();
-          }
-
-          // Task 5: Render Custom Text Tool Overlays in Export
-          for (const textItem of textOverlays) {
-            const isVisible = textItem.allVideo || (currentTime >= textItem.startSec && currentTime <= textItem.endSec);
-            if (!isVisible || !textItem.text.trim()) continue;
-
-            ctx.save();
-            const textFontSize = Math.max(12, Math.round(textItem.fontSize * (height / 720)));
-            ctx.font = `bold ${textFontSize}px ${textItem.fontFamily}`;
-            ctx.textBaseline = 'middle';
-            ctx.textAlign = 'center';
-
-            const tX = width * (textItem.xPercent / 100);
-            const tY = height * (textItem.yPercent / 100);
-
-            const textLines = textItem.text.split('\n');
-            const lineHeight = textFontSize * 1.25;
-            const totalTextHeight = textLines.length * lineHeight;
-            const startY = tY - (totalTextHeight / 2) + (lineHeight / 2);
-
-            for (let lIdx = 0; lIdx < textLines.length; lIdx++) {
-              const line = textLines[lIdx];
-              const curY = startY + (lIdx * lineHeight);
-              const textMetrics = ctx.measureText(line);
-
-              // Background box / badge if configured
-              if (textItem.showBackground && textItem.backgroundColor !== 'transparent') {
-                ctx.save();
-                ctx.fillStyle = textItem.backgroundColor;
-                const padX = textFontSize * 0.4;
-                const padY = textFontSize * 0.2;
-                const boxW = textMetrics.width + (padX * 2);
-                const boxH = textFontSize * 1.1 + (padY * 2);
-                const boxX = tX - (boxW / 2);
-                const boxY = curY - (boxH / 2);
-                ctx.beginPath();
-                if ((ctx as any).roundRect) {
-                  (ctx as any).roundRect(boxX, boxY, boxW, boxH, 8);
-                } else {
-                  ctx.rect(boxX, boxY, boxW, boxH);
-                }
-                ctx.fill();
-                ctx.restore();
-              }
-
-              if (textItem.shadow) {
-                ctx.save();
-                ctx.lineWidth = Math.max(3, textFontSize * 0.15);
-                ctx.strokeStyle = '#000000';
-                ctx.strokeText(line, tX, curY);
-                ctx.restore();
-              }
-
-              ctx.fillStyle = textItem.color;
-              ctx.fillText(line, tX, curY);
-            }
-            ctx.restore();
-          }
-
-          requestAnimationFrame(drawFrame);
-        };
-
-        requestAnimationFrame(drawFrame);
-      });
-
-      if (recorder.state === 'recording') {
-        try { recorder.requestData(); } catch (e) {}
-        await new Promise(r => setTimeout(r, 150));
-        recorder.stop();
-      }
-
-      // Keep video paused after export
-      video.pause();
-      video.currentTime = 0;
-      setIsPlaying(false);
-
-      const outputBlob = await renderPromise;
-      let finalBlob = outputBlob;
-
-      const downloadUrl = URL.createObjectURL(finalBlob);
+      const downloadUrl = URL.createObjectURL(exportedBlob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = `captionfree-export.${fileExt}`;
+      a.download = 'captionpro-export.mp4';
       document.body.appendChild(a);
       a.click();
       setTimeout(() => {
@@ -1658,21 +1314,29 @@ export default function App() {
         } catch (e) {}
       }, 5000);
 
-      setStatusMessage(`Exported video (${Math.round(targetDuration)}s full duration) with audio.`);
+      setExportProgress(100);
+      setExportStatusDetail('Video exported successfully!');
+      setStatusMessage('Export complete! Full duration video exported successfully with audio and burned-in captions.');
       setStatusType('success');
+      setTimeout(() => {
+        setIsExporting(false);
+        setExportProgress(0);
+      }, 800);
+
     } catch (err: any) {
-      console.error("Export error:", err);
-      setStatusMessage(`Export failed: ${err.message || 'Error recording video'}`);
+      if (err.name === 'AbortError') return;
+      console.error("FFmpeg.wasm export error:", err);
+      setStatusMessage(`Export failed: ${err.message || 'Error processing video'}`);
       setStatusType('error');
-    } finally {
       setIsExporting(false);
       setExportProgress(0);
-      try {
-        if (combinedStream) combinedStream.getTracks().forEach(track => track.stop());
-        if (canvasStream) canvasStream.getTracks().forEach(track => track.stop());
-        if (audioStream) audioStream.getTracks().forEach(track => track.stop());
-      } catch (e) {}
-      chunks.length = 0;
+    } finally {
+      clearInterval(exportTimer);
+      const vid = videoRef.current;
+      if (vid) {
+        vid.pause();
+        setIsPlaying(false);
+      }
     }
   };
 

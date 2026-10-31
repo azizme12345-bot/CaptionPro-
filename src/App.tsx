@@ -1431,9 +1431,14 @@ export default function App() {
               <span>CaptionPro • AI Video Caption Studio</span>
             </div>
 
-            <h1 className="text-[34px] sm:text-[48px] font-[900] leading-[1.2] mb-[15px] tracking-[-1px] text-white max-w-[820px] mx-auto">
+            <h1 className="text-[34px] sm:text-[48px] font-[900] leading-[1.2] mb-[12px] tracking-[-1px] text-white max-w-[820px] mx-auto">
               Every word deserves the spotlight.
             </h1>
+            <div className="mb-5">
+              <span className="text-[#10b981] font-bold text-base sm:text-lg bg-[#10b981]/10 px-4 py-1.5 rounded-full border border-[#10b981]/30 inline-block shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                100% Free – No Signup Required
+              </span>
+            </div>
             <p className="text-[#a1a1aa] text-[15px] sm:text-[17px] max-w-[620px] mx-auto mb-[30px]">
               Turn your Reels, TikTok, and YouTube Shorts into engaging, viral content with synchronized AI captions. Customize typography, colors, and burn subtitles into MP4 with preserved audio.
             </p>
